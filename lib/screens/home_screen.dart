@@ -182,7 +182,9 @@ class _HomeScreenState extends State<HomeScreen> {
         return m == null ? 1 << 30 : int.parse(m.group(0)!);
       }
 
-      chests.sort((a, b) {
+      // Database se mili list ki COPY par sort karo — asli list read-only
+      // ho sakti hai (sqflite), usey seedha sort karne par app atki thi.
+      final sortedChests = [...chests]..sort((a, b) {
         var c = numKey(a['room_no']).compareTo(numKey(b['room_no']));
         if (c != 0) return c;
         c = (a['room_no']?.toString() ?? '')
@@ -194,7 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
             .compareTo((b['number'] as num?)?.toInt() ?? 0);
       });
       setState(() {
-        _chests = chests;
+        _chests = sortedChests;
         _notes = notes;
         _roomDues = dues;
         _totals = totals;

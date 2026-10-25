@@ -162,6 +162,14 @@ class DatabaseHelper {
 
   static int _toInt(Object? v) => (v as num?)?.toInt() ?? 0;
 
+  /// sqflite (2.4+) query ke results READ-ONLY deta hai — un par sort/add
+  /// karne par "Unsupported operation: read-only" error aata hai (v1.1.0/1.1.1
+  /// me home isi se atak gayi thi). Isliye bahar hamesha badli ja sakne wali
+  /// copy bhejte hain — andar chahe jo ho, UI ko hamesha mutable milega.
+  static List<Map<String, dynamic>> _mutableRows(
+          List<Map<String, dynamic>> rows) =>
+      rows.map((r) => Map<String, dynamic>.from(r)).toList();
+
   // --- Transactions Logic ---
   Future<int> addTransaction(
       int chestNo, String title, int amount, bool isAdvance) async {
@@ -266,12 +274,12 @@ class DatabaseHelper {
 
   Future<List<Map<String, dynamic>>> getTransactions(int chestNo) async {
     final db = await instance.database;
-    return await db.query(
+    return _mutableRows(await db.query(
       'transactions',
       where: 'chest_no = ?',
       whereArgs: [chestNo],
       orderBy: 'date DESC, id DESC',
-    );
+    ));
   }
 
   Future<int> getTotalExpense(int chestNo) async {
@@ -286,14 +294,14 @@ class DatabaseHelper {
   /// Har room ka kul kharcha/jama — home screen ke cards par "Lena ₹X" ke liye.
   Future<List<Map<String, dynamic>>> getRoomBalances() async {
     final db = await instance.database;
-    return await db.rawQuery('''
+    return _mutableRows(await db.rawQuery('''
       SELECT c.number AS chest_no,
         COALESCE(SUM(CASE WHEN t.is_advance = 0 THEN t.amount END), 0) AS expense,
         COALESCE(SUM(CASE WHEN t.is_advance = 1 THEN t.amount END), 0) AS paid
       FROM chests c
       LEFT JOIN transactions t ON t.chest_no = c.number
       GROUP BY c.number
-    ''');
+    '''));
   }
 
   /// Home ke upar wale summary card ke liye: total + aaj ka hisaab.
@@ -331,20 +339,20 @@ class DatabaseHelper {
   /// room delete ho gaya ho to bhi uski purani entries report se gayab na hon.
   Future<List<Map<String, dynamic>>> getAllTransactionsForReport() async {
     final db = await instance.database;
-    return await db.rawQuery('''
+    return _mutableRows(await db.rawQuery('''
       SELECT t.date, t.chest_no, c.name, c.room_no,
              c.chest_no AS chest_display, t.title, t.amount, t.is_advance
       FROM transactions t
       LEFT JOIN chests c ON t.chest_no = c.number
       ORDER BY t.date DESC, t.id DESC
-    ''');
+    '''));
   }
 
   // --- Checkout History ---
   Future<List<Map<String, dynamic>>> getCheckouts() async {
     final db = await instance.database;
-    return await db.query('checkouts',
-        orderBy: 'checkout_date DESC, id DESC');
+    return _mutableRows(await db.query('checkouts',
+        orderBy: 'checkout_date DESC, id DESC'));
   }
 
   Future<void> deleteCheckout(int id) async {
@@ -355,7 +363,8 @@ class DatabaseHelper {
   // --- Chest (Room) Logic ---
   Future<List<Map<String, dynamic>>> getAllChests() async {
     final db = await instance.database;
-    return await db.query('chests', orderBy: 'number ASC');
+    return _mutableRows(
+        await db.query('chests', orderBy: 'number ASC'));
   }
 
   /// true = add ho gaya, false = is number ka room pehle se hai.
@@ -472,7 +481,7 @@ class DatabaseHelper {
     final db = await instance.database;
     final res =
         await db.query('chests', where: 'number = ?', whereArgs: [number]);
-    return res.isEmpty ? null : res.first;
+    return res.isEmpty ? null : Map<String, dynamic>.from(res.first);
   }
 
   /// Room delete ke saath uska hisaab bhi saaf karo, warna wahi number
@@ -498,8 +507,8 @@ class DatabaseHelper {
 
   Future<List<Map<String, dynamic>>> getPendingNotes() async {
     final db = await instance.database;
-    return await db.query('rough_notes',
-        where: 'is_done = 0', orderBy: 'date ASC');
+    return _mutableRows(await db.query('rough_notes',
+        where: 'is_done = 0', orderBy: 'date ASC'));
   }
 
   /// Note ko done mark karo (is_done column pehle bana tha par use nahi ho raha tha).
@@ -517,7 +526,8 @@ class DatabaseHelper {
   // --- Menu Logic ---
   Future<List<Map<String, dynamic>>> getMenuItems() async {
     final db = await instance.database;
-    return await db.query('menu_items', orderBy: 'name ASC');
+    return _mutableRows(
+        await db.query('menu_items', orderBy: 'name ASC'));
   }
 
   Future<void> addMenuItem(String name, int price, String icon) async {

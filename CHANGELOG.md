@@ -3,6 +3,10 @@
 Har version ka APK yahan milega: https://github.com/rahul74603/Room_Service/releases
 Phone par lage hue app ka version Home screen ke upar "Version X.Y.Z" me dikhta hai.
 
+## v1.1.2 (build 4) — asli loading fix (read-only list sort)
+- Asli wajah pakdi gayi: database (sqflite) se mili Sir ki list **read-only** hoti hai; app use Room ke hisaab se **seedha sort** kar rahi thi, isliye "Unsupported operation: read-only" error se home atak gayi thi.
+- Fix: DatabaseHelper ab har query ka result **badli ja sakne wali copy** karke deta hai, aur home bhi copy par sort karti hai — ye error ab kahin nahi aayega.
+
 ## v1.1.1 (build 3) — loading fix
 - Kuch phones par app home par **loading par atak** jata tha: ab startup par pehle data load hota hai (speech baad me), DB khulne par auto-retry hai, aur error aane par infinite loading ki jagah **error screen + "Dobara Try Karo" button** dikhta hai.
 - Upar ka app title chhota kiya (kat raha tha).
