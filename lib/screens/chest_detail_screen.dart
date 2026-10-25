@@ -274,7 +274,7 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
 
   // ---------- PDF ----------
   String _pdfMoney(int v) =>
-      'Rs. ${NumberFormat('#,##0', 'en_IN').format(v)}';
+      'Rs. ${NumberFormat.decimalPattern('en_IN').format(v)}';
 
   Future<void> _generateAndPreviewPdf() async {
     // Hindi naam/item PDF me saaf dikhe — uske liye Devanagari font.

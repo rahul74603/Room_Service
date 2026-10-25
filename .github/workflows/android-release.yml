@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   build:
@@ -45,12 +46,16 @@ jobs:
       - name: Code check (analyze)
         id: analyze
         continue-on-error: true
-        run: flutter analyze --no-fatal-infos 2>&1 | tee analyze.txt
+        run: |
+          set -o pipefail
+          flutter analyze --no-fatal-infos 2>&1 | tee analyze.txt
 
       - name: Tests
         id: tests
         continue-on-error: true
-        run: flutter test 2>&1 | tee tests.txt
+        run: |
+          set -o pipefail
+          flutter test 2>&1 | tee tests.txt
 
       - name: Analyze/Test report (summary)
         if: always()
@@ -101,7 +106,9 @@ jobs:
       - name: Release APK build
         id: buildapk
         continue-on-error: true
-        run: flutter build apk --release 2>&1 | tee build.txt
+        run: |
+          set -o pipefail
+          flutter build apk --release 2>&1 | tee build.txt
 
       - name: Build report (summary)
         if: always()
@@ -145,3 +152,29 @@ jobs:
         with:
           tag_name: ${{ github.event.release.tag_name }}
           files: ${{ steps.apk.outputs.apk_path }}
+
+      # Fail hone par error report PR par comment me bhi, taaki bina
+      # lambi log file khole turant pata chale kya toota.
+      - name: CI fail report (PR comment)
+        if: always() && (steps.analyze.outcome == 'failure' || steps.tests.outcome == 'failure' || steps.buildapk.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR=$(gh pr list --head "$GITHUB_REF_NAME" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          if [ -z "$PR" ]; then
+            echo "Open PR nahi mila — comment skip (summary me report hai)."
+            exit 0
+          fi
+          {
+            echo "## ❌ CI fail — run ${{ github.run_id }}"
+            echo ""
+            echo "Analyze: **${{ steps.analyze.outcome }}** · Tests: **${{ steps.tests.outcome }}** · Build: **${{ steps.buildapk.outcome }}**"
+            for f in analyze tests build; do
+              echo ""
+              echo "### $f output (aakhri 80 lines)"
+              echo '```'
+              tail -n 80 "$f.txt" 2>/dev/null || echo "(output nahi bana)"
+              echo '```'
+            done
+          } > ci-comment.md
+          gh pr comment "$PR" --body-file ci-comment.md

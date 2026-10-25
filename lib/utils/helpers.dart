@@ -3,7 +3,9 @@ import 'package:intl/intl.dart';
 /// Chhote-chhote shared helpers (amount format, phone saaf karna, CSV safety).
 /// Ye pure functions hain — inke unit test `test/widget_test.dart` me hain.
 class AppHelpers {
-  static final NumberFormat _inrFormat = NumberFormat('#,##0', 'en_IN');
+  // decimalPattern('en_IN') Indian grouping deta hai: 1,50,000
+  // (sidha '#,##0' pattern Western 150,000 bana deta tha)
+  static final NumberFormat _inrFormat = NumberFormat.decimalPattern('en_IN');
 
   /// 1500 -> "₹1,500" | 150000 -> "₹1,50,000" | -500 -> "-₹500"
   static String formatRupees(int amount) {
