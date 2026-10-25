@@ -3,6 +3,11 @@
 Har version ka APK yahan milega: https://github.com/rahul74603/Room_Service/releases
 Phone par lage hue app ka version Home screen ke upar "Version X.Y.Z" me dikhta hai.
 
+## v1.1.1 (build 3) — loading fix
+- Kuch phones par app home par **loading par atak** jata tha: ab startup par pehle data load hota hai (speech baad me), DB khulne par auto-retry hai, aur error aane par infinite loading ki jagah **error screen + "Dobara Try Karo" button** dikhta hai.
+- Upar ka app title chhota kiya (kat raha tha).
+- (Note: DB/SQL jaanch me sab sahi mila; ye version asal wajah ko rokta bhi hai aur dikhata bhi hai.)
+
 ## v1.1.0 (build 2) — pehla GitHub Release
 **Sir / Room / Chest model (BSF Academy style)**
 - Card ab "Room" nahi, **ek Sir** hai: Naam + Room No. + Chest No. alag-alag, sab editable — Sir/room/chest badalne par hisaab nahi tootta (identity andar fixed ID se).
