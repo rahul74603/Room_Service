@@ -93,8 +93,8 @@ class _MenuScreenState extends State<MenuScreen> {
               var icon = iconC.text.trim();
               if (icon.isEmpty) icon = '🍽️';
               if (isEdit) {
-                await DatabaseHelper.instance.updateMenuItem(
-                    (item['id'] as num).toInt(), name, price, icon);
+                await DatabaseHelper.instance
+                    .updateMenuItem(editId, name, price, icon);
               } else {
                 await DatabaseHelper.instance.addMenuItem(name, price, icon);
               }
