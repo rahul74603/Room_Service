@@ -6,6 +6,8 @@
 
 **Har naye version ka APK: https://github.com/rahul74603/Room_Service/releases**
 
+**Permanent direct link:** https://github.com/rahul74603/Room_Service/releases/latest/download/RoomServicePro.apk — ye hamesha sabse latest version dega (v1.1.0: sirf neeche wala version-naam link; permanent wala v1.2.0 se chalega).
+
 1. Phone me link kholo → sabse upar wala (latest) version → `RoomServicePro-vX.Y.Z.apk` download karo.
 2. Install dabao (pehli baar Android "unknown apps install" allow mangega — allow kar do).
 3. Update bhi aise hi — purane ke upar lag jayega, **purana hisaab-data bilkul safe** rahega (har release ek hi permanent key se sign hoti hai).
