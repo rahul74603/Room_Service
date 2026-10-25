@@ -40,11 +40,44 @@ jobs:
       - name: Dependencies download
         run: flutter pub get
 
+      # analyze/test/build ka output job summary me bhi jata hai,
+      # taaki errors bina full log khole API se padhe jaa saken.
       - name: Code check (analyze)
-        run: flutter analyze --no-fatal-infos
+        id: analyze
+        continue-on-error: true
+        run: flutter analyze --no-fatal-infos 2>&1 | tee analyze.txt
 
       - name: Tests
-        run: flutter test
+        id: tests
+        continue-on-error: true
+        run: flutter test 2>&1 | tee tests.txt
+
+      - name: Analyze/Test report (summary)
+        if: always()
+        run: |
+          {
+            echo "## 🔎 Analyze: ${{ steps.analyze.outcome }} | Tests: ${{ steps.tests.outcome }}"
+            echo ""
+            echo "<details><summary>flutter analyze output</summary>"
+            echo ""
+            echo '```'
+            tail -n 150 analyze.txt 2>/dev/null || echo "(no output)"
+            echo '```'
+            echo "</details>"
+            echo ""
+            echo "<details><summary>flutter test output</summary>"
+            echo ""
+            echo '```'
+            tail -n 120 tests.txt 2>/dev/null || echo "(no output)"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Analyze/Tests me gadbad ho to yahi roko
+        if: steps.analyze.outcome == 'failure' || steps.tests.outcome == 'failure'
+        run: |
+          echo "::error::Analyze ya Tests fail hue hain — upar wali summary report dekho."
+          exit 1
 
       - name: Signing setup (key repo me locked hai, password Secret se)
         env:
@@ -66,7 +99,30 @@ jobs:
           fi
 
       - name: Release APK build
-        run: flutter build apk --release
+        id: buildapk
+        continue-on-error: true
+        run: flutter build apk --release 2>&1 | tee build.txt
+
+      - name: Build report (summary)
+        if: always()
+        run: |
+          {
+            echo ""
+            echo "## 🏗️ APK Build: ${{ steps.buildapk.outcome }}"
+            echo ""
+            echo "<details><summary>flutter build output (last 150 lines)</summary>"
+            echo ""
+            echo '```'
+            tail -n 150 build.txt 2>/dev/null || echo "(no output)"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build fail ho to yahi roko
+        if: steps.buildapk.outcome == 'failure'
+        run: |
+          echo "::error::APK build fail hua — summary report dekho."
+          exit 1
 
       - name: APK ko version wala naam do
         id: apk
