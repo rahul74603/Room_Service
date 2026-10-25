@@ -41,6 +41,19 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Voice se hisaab entry karne ke liye microphone ki zaroorat hai.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Aapki awaaz ko text me badal kar Room hisaab entry banane ke liye speech recognition ki zaroorat hai.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Room par guest ki photo lagane ke liye photo gallery ki zaroorat hai.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Room par guest ki photo click karne ke liye camera ki zaroorat hai.</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>whatsapp</string>
+		<string>https</string>
+	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

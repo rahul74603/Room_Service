@@ -2,7 +2,7 @@ name: chest_buddy
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: ^3.10.7
@@ -20,8 +20,7 @@ dependencies:
   flutter_tts: ^4.2.5         # Bolne ke liye (Speaker)
   sqflite: ^2.3.0             # Database (Hisaab save karne ke liye)
   path: ^1.8.3                # Database path helper
-  provider: ^6.1.1            # Data ko manage karne ke liye
-  intl: ^0.18.1               # Date format ke liye
+  intl: ^0.18.1               # Date/Number (₹) format ke liye
   permission_handler: ^11.3.0 # Mic permission ke liye
   url_launcher: ^6.3.2        # WhatsApp/Call ke liye
   pdf: ^3.11.3                # PDF banane ke liye

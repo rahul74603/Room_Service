@@ -1,0 +1,180 @@
+name: Build Android APK (RoomService Pro)
+
+# Kab chalega:
+#  - main / arena branch par push  -> sirf check + test APK (Actions artifact)
+#  - GitHub Release publish hone par -> APK banakar usi Release me attach
+#    (wahi se phone par direct download hota hai)
+on:
+  push:
+    branches:
+      - main
+      - "arena/**"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Java 17 setup
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Flutter setup
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Dependencies download
+        run: flutter pub get
+
+      # analyze/test/build ka output job summary me bhi jata hai,
+      # taaki errors bina full log khole API se padhe jaa saken.
+      - name: Code check (analyze)
+        id: analyze
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          flutter analyze --no-fatal-infos 2>&1 | tee analyze.txt
+
+      - name: Tests
+        id: tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          flutter test 2>&1 | tee tests.txt
+
+      - name: Analyze/Test report (summary)
+        if: always()
+        run: |
+          {
+            echo "## 🔎 Analyze: ${{ steps.analyze.outcome }} | Tests: ${{ steps.tests.outcome }}"
+            echo ""
+            echo "<details><summary>flutter analyze output</summary>"
+            echo ""
+            echo '```'
+            tail -n 150 analyze.txt 2>/dev/null || echo "(no output)"
+            echo '```'
+            echo "</details>"
+            echo ""
+            echo "<details><summary>flutter test output</summary>"
+            echo ""
+            echo '```'
+            tail -n 120 tests.txt 2>/dev/null || echo "(no output)"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Analyze/Tests me gadbad ho to yahi roko
+        if: steps.analyze.outcome == 'failure' || steps.tests.outcome == 'failure'
+        run: |
+          echo "::error::Analyze ya Tests fail hue hain — upar wali summary report dekho."
+          exit 1
+
+      - name: Signing setup (key repo me locked hai, password Secret se)
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_PASSWORD" ]; then
+            cat > android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEYSTORE_PASSWORD
+          keyAlias=upload
+          storeFile=upload-keystore.p12
+          EOF
+            echo "Permanent signing ready — updates purane version ke upar install honge."
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            echo "::error::KEYSTORE_PASSWORD secret missing hai! Release roki gayi — pehle repo Settings > Secrets > Actions me KEYSTORE_PASSWORD add karo, warna users ko update par app uninstall karna padega."
+            exit 1
+          else
+            echo "::warning::KEYSTORE_PASSWORD secret nahi mila — ye sirf test build hai, debug key se sign hoga (install mat karna)."
+          fi
+
+      - name: Release APK build
+        id: buildapk
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          flutter build apk --release 2>&1 | tee build.txt
+
+      - name: Build report (summary)
+        if: always()
+        run: |
+          {
+            echo ""
+            echo "## 🏗️ APK Build: ${{ steps.buildapk.outcome }}"
+            echo ""
+            echo "<details><summary>flutter build output (last 150 lines)</summary>"
+            echo ""
+            echo '```'
+            tail -n 150 build.txt 2>/dev/null || echo "(no output)"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build fail ho to yahi roko
+        if: steps.buildapk.outcome == 'failure'
+        run: |
+          echo "::error::APK build fail hua — summary report dekho."
+          exit 1
+
+      - name: APK ko version wala naam do
+        id: apk
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d'+' -f1)
+          mkdir -p release-out
+          cp build/app/outputs/flutter-apk/app-release.apk "release-out/RoomServicePro-v${VERSION}.apk"
+          echo "apk_path=release-out/RoomServicePro-v${VERSION}.apk" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: APK artifact save (har build par)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoomServicePro-v${{ steps.apk.outputs.version }}-apk
+          path: ${{ steps.apk.outputs.apk_path }}
+
+      - name: Release me APK attach (sirf Release publish par)
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ${{ steps.apk.outputs.apk_path }}
+
+      # Fail hone par error report PR par comment me bhi, taaki bina
+      # lambi log file khole turant pata chale kya toota.
+      - name: CI fail report (PR comment)
+        if: always() && (steps.analyze.outcome == 'failure' || steps.tests.outcome == 'failure' || steps.buildapk.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR=$(gh pr list --head "$GITHUB_REF_NAME" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          if [ -z "$PR" ]; then
+            echo "Open PR nahi mila — comment skip (summary me report hai)."
+            exit 0
+          fi
+          {
+            echo "## ❌ CI fail — run ${{ github.run_id }}"
+            echo ""
+            echo "Analyze: **${{ steps.analyze.outcome }}** · Tests: **${{ steps.tests.outcome }}** · Build: **${{ steps.buildapk.outcome }}**"
+            for f in analyze tests build; do
+              echo ""
+              echo "### $f output (aakhri 80 lines)"
+              echo '```'
+              tail -n 80 "$f.txt" 2>/dev/null || echo "(output nahi bana)"
+              echo '```'
+            done
+          } > ci-comment.md
+          gh pr comment "$PR" --body-file ci-comment.md
