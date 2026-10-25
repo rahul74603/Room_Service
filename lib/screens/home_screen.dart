@@ -892,7 +892,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   end: Alignment.bottomRight,
                 ),
           image: hasImage
-              ? DecorationImage(image: FileImage(imageFile), fit: BoxFit.cover)
+              ? DecorationImage(image: FileImage(imageFile!), fit: BoxFit.cover)
               : null,
           boxShadow: [
             BoxShadow(
