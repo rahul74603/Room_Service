@@ -137,6 +137,10 @@ jobs:
           VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d'+' -f1)
           mkdir -p release-out
           cp build/app/outputs/flutter-apk/app-release.apk "release-out/RoomServicePro-v${VERSION}.apk"
+          # Fixed naam wali copy: isse ek PERMANENT direct link banta hai jo
+          # hamesha latest release ka APK deta hai:
+          #   /releases/latest/download/RoomServicePro.apk
+          cp build/app/outputs/flutter-apk/app-release.apk "release-out/RoomServicePro.apk"
           echo "apk_path=release-out/RoomServicePro-v${VERSION}.apk" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
@@ -151,7 +155,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.release.tag_name }}
-          files: ${{ steps.apk.outputs.apk_path }}
+          files: |
+            ${{ steps.apk.outputs.apk_path }}
+            release-out/RoomServicePro.apk
 
       # Fail hone par error report PR par comment me bhi, taaki bina
       # lambi log file khole turant pata chale kya toota.
