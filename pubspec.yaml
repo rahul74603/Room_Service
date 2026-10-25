@@ -1,0 +1,53 @@
+name: chest_buddy
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Default Icons
+  cupertino_icons: ^1.0.8
+
+  # --- HUMARE NAYE TOOLS ---
+  google_fonts: ^6.1.0        # Hindi font ke liye
+  speech_to_text: ^7.0.0      # Aawaz sunne ke liye (Mic)
+  flutter_tts: ^4.2.5         # Bolne ke liye (Speaker)
+  sqflite: ^2.3.0             # Database (Hisaab save karne ke liye)
+  path: ^1.8.3                # Database path helper
+  provider: ^6.1.1            # Data ko manage karne ke liye
+  intl: ^0.18.1               # Date format ke liye
+  permission_handler: ^11.3.0 # Mic permission ke liye
+  url_launcher: ^6.3.2        # WhatsApp/Call ke liye
+  pdf: ^3.11.3                # PDF banane ke liye
+  printing: ^5.14.2           # PDF dikhane/print karne ke liye
+  share_plus: ^12.0.1         # File share karne ke liye
+  path_provider: ^2.1.5       # Folder path dhoondne ke liye
+  shared_preferences: ^2.5.4  # Dark Mode save karne ke liye
+  image_picker: ^1.0.7        # Gallery se photo lene ke liye 📸
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+  flutter_launcher_icons: ^0.13.1 # App Icon change karne ke liye 🎨
+
+flutter:
+  uses-material-design: true
+  
+  # Assets folder register kiya
+  assets:
+    - assets/
+
+# --- APP ICON SETTINGS ---
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  # ✅ Yahan maine aapka bataya hua naam 'icon.jpeg' set kar diya hai
+  image_path: "assets/icon.jpeg"
+  min_sdk_android: 21
