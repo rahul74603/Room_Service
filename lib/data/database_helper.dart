@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
@@ -22,7 +23,16 @@ class DatabaseHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB(_dbFileName);
+    try {
+      _database = await _initDB(_dbFileName);
+    } catch (e, st) {
+      // Pehli baar khulne me fail ho (jaise backup-restore ke baad aadhi
+      // state), to ek baar saaf koshish aur karo. Phir bhi fail ho to
+      // error upar UI tak jayega jahan Retry button milega.
+      developer.log('DB khulne me dikkat, ek retry kar rahe hain',
+          error: e, stackTrace: st);
+      _database = await _initDB(_dbFileName);
+    }
     return _database!;
   }
 

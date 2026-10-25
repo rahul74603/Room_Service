@@ -39,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
     'todayPaid': 0,
   };
   bool _isLoading = true;
+  String? _loadError; // load fail ho to infinite spinner ki jagah error+retry
 
   final List<Color> _cardColors = const [
     Color(0xFF6C5CE7), Color(0xFF00B894),
@@ -49,7 +50,13 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _refreshAll();
+    _bootstrap();
+  }
+
+  /// Startup par pehle DATA load karo, speech baad me — kuch phones par
+  /// speech service judne me der lagti hai, usse home ki loading na atke.
+  Future<void> _bootstrap() async {
+    await _refreshAll();
     _initSpeech();
   }
 
@@ -156,42 +163,86 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ---------- Data ----------
   Future<void> _refreshAll() async {
-    final chests = await DatabaseHelper.instance.getAllChests();
-    final notes = await DatabaseHelper.instance.getPendingNotes();
-    final balanceRows = await DatabaseHelper.instance.getRoomBalances();
-    final totals = await DatabaseHelper.instance.getDashboardTotals();
-    if (!mounted) return;
-    final dues = <int, int>{};
-    for (final row in balanceRows) {
-      final no = (row['chest_no'] as num?)?.toInt() ?? 0;
-      final expense = (row['expense'] as num?)?.toInt() ?? 0;
-      final paid = (row['paid'] as num?)?.toInt() ?? 0;
-      dues[no] = expense - paid;
-    }
-    // Ek room ke dono Sir paas-paas dikhen: pehle Room No., fir Chest No.
-    int numKey(Object? v) {
-      final m = RegExp(r'\d+').firstMatch(v?.toString() ?? '');
-      return m == null ? 1 << 30 : int.parse(m.group(0)!);
-    }
+    try {
+      final chests = await DatabaseHelper.instance.getAllChests();
+      final notes = await DatabaseHelper.instance.getPendingNotes();
+      final balanceRows = await DatabaseHelper.instance.getRoomBalances();
+      final totals = await DatabaseHelper.instance.getDashboardTotals();
+      if (!mounted) return;
+      final dues = <int, int>{};
+      for (final row in balanceRows) {
+        final no = (row['chest_no'] as num?)?.toInt() ?? 0;
+        final expense = (row['expense'] as num?)?.toInt() ?? 0;
+        final paid = (row['paid'] as num?)?.toInt() ?? 0;
+        dues[no] = expense - paid;
+      }
+      // Ek room ke dono Sir paas-paas dikhen: pehle Room No., fir Chest No.
+      int numKey(Object? v) {
+        final m = RegExp(r'\d+').firstMatch(v?.toString() ?? '');
+        return m == null ? 1 << 30 : int.parse(m.group(0)!);
+      }
 
-    chests.sort((a, b) {
-      var c = numKey(a['room_no']).compareTo(numKey(b['room_no']));
-      if (c != 0) return c;
-      c = (a['room_no']?.toString() ?? '')
-          .compareTo(b['room_no']?.toString() ?? '');
-      if (c != 0) return c;
-      c = numKey(a['chest_no']).compareTo(numKey(b['chest_no']));
-      if (c != 0) return c;
-      return ((a['number'] as num?)?.toInt() ?? 0)
-          .compareTo((b['number'] as num?)?.toInt() ?? 0);
-    });
-    setState(() {
-      _chests = chests;
-      _notes = notes;
-      _roomDues = dues;
-      _totals = totals;
-      _isLoading = false;
-    });
+      chests.sort((a, b) {
+        var c = numKey(a['room_no']).compareTo(numKey(b['room_no']));
+        if (c != 0) return c;
+        c = (a['room_no']?.toString() ?? '')
+            .compareTo(b['room_no']?.toString() ?? '');
+        if (c != 0) return c;
+        c = numKey(a['chest_no']).compareTo(numKey(b['chest_no']));
+        if (c != 0) return c;
+        return ((a['number'] as num?)?.toInt() ?? 0)
+            .compareTo((b['number'] as num?)?.toInt() ?? 0);
+      });
+      setState(() {
+        _chests = chests;
+        _notes = notes;
+        _roomDues = dues;
+        _totals = totals;
+        _loadError = null;
+        _isLoading = false;
+      });
+    } catch (e) {
+      // Kabhi infinite loading par mat atko — error dikhao, Retry do
+      if (!mounted) return;
+      setState(() {
+        _loadError = '$e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Widget _buildLoadErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Colors.red),
+            const SizedBox(height: 12),
+            const Text(
+              'Data load nahi ho paya',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            SelectableText(
+              _loadError ?? '',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: () {
+                setState(() => _isLoading = true);
+                _refreshAll();
+              },
+              icon: const Icon(Icons.refresh),
+              label: const Text('Dobara Try Karo'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _openChest(Map<String, dynamic> chest) async {
@@ -787,7 +838,7 @@ class _HomeScreenState extends State<HomeScreen> {
               'RoomService Pro',
               style: GoogleFonts.poppins(
                 fontWeight: FontWeight.w700,
-                fontSize: 22,
+                fontSize: 18,
                 color: isDark ? Colors.white : Colors.black87,
               ),
             ),
@@ -841,7 +892,9 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
+          : (_loadError != null && _chests.isEmpty)
+              ? _buildLoadErrorState()
+              : Column(
               children: [
                 _buildSummaryCard(isDark),
                 _buildNotesStrip(isDark),

@@ -118,6 +118,7 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
   }
 
   Future<void> _refreshData() async {
+   try {
     final chest = await DatabaseHelper.instance.getChest(_chestNo);
     final data = await DatabaseHelper.instance.getTransactions(_chestNo);
     final menu = await DatabaseHelper.instance.getMenuItems();
@@ -157,6 +158,12 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
       _menuItems = menu;
       _isLoading = false;
     });
+   } catch (e) {
+     // Infinite loading ki jagah error dikhao
+     if (!mounted) return;
+     setState(() => _isLoading = false);
+     _showMsg('Data load error: $e', isError: true);
+   }
   }
 
   List<Map<String, dynamic>> get _visibleTransactions {
