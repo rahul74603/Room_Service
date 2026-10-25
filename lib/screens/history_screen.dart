@@ -49,8 +49,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(
-            '${checkout['room_name'] ?? 'Room'} (Room ${checkout['chest_no']})'),
+        title: Text('${checkout['room_name'] ?? 'Sir'}'),
         content: SizedBox(
           width: double.maxFinite,
           child: items.isEmpty
@@ -149,10 +148,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         child: ListTile(
                           onTap: () => _showDetails(c),
                           leading: CircleAvatar(
-                            child: Text('${c['chest_no'] ?? ''}'),
+                            child: Text(
+                              (c['room_name']?.toString().isNotEmpty ?? false)
+                                  ? c['room_name'].toString()[0].toUpperCase()
+                                  : 'S',
+                            ),
                           ),
                           title: Text(
-                            c['room_name']?.toString() ?? 'Room ${c['chest_no']}',
+                            c['room_name']?.toString() ?? 'Sir',
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           subtitle: Text(

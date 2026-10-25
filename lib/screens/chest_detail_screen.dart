@@ -41,6 +41,10 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
   // Fresh name/phone DB se (pehle purana widget wala data use ho raha tha)
   late String _roomName;
   late String _phone;
+  String _roomNo = '';
+  String _chestDisplay = '';
+  int _washingAmount = 2000;
+  DateTime? _washingStart; // sirf date (time hamesha 00:00)
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -140,8 +144,12 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
     setState(() {
       _roomName = chest['name']?.toString() ?? _roomName;
       _phone = chest['phone']?.toString() ?? '';
+      _roomNo = chest['room_no']?.toString() ?? '';
+      _chestDisplay = chest['chest_no']?.toString() ?? '';
+      _washingAmount = (chest['washing_amount'] as num?)?.toInt() ?? 2000;
       _isWashingOn = chest['is_washing_on'] == 1;
       _washingStartDate = chest['washing_start_date']?.toString() ?? '';
+      _washingStart = _parseWashingDate(_washingStartDate);
       _transactions = data;
       _totalExpense = expense;
       _totalPaid = paid;
@@ -252,7 +260,7 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
       return;
     }
     setState(() => _isSpeaking = true);
-    var textToSpeak = 'रूम नंबर $_chestNo, $_roomName का हिसाब। ';
+    var textToSpeak = '$_roomName का हिसाब। ';
     textToSpeak += 'कुल खर्चा $_totalExpense रुपये। जमा हुए $_totalPaid रुपये। ';
     if (_balanceDue > 0) {
       textToSpeak += 'लेने बचे हैं $_balanceDue रुपये।';
@@ -302,7 +310,9 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
                   pw.Text('Customer: $_roomName'),
-                  pw.Text('Room No: $_chestNo'),
+                  if (_roomNo.isNotEmpty) pw.Text('Room No: $_roomNo'),
+                  pw.Text(
+                      'Chest No: ${_chestDisplay.isEmpty ? _chestNo : _chestDisplay}'),
                   if (_phone.isNotEmpty) pw.Text('Phone: $_phone'),
                 ],
               ),
@@ -397,7 +407,12 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
           isError: true);
       return;
     }
-    final buffer = StringBuffer('*BILL: $_roomName (Room $_chestNo)*\n------------------\n');
+    final who = [
+      if (_roomNo.isNotEmpty) 'Room $_roomNo',
+      if (_chestDisplay.isNotEmpty) 'Chest $_chestDisplay',
+    ].join(', ');
+    final buffer = StringBuffer(
+        '*BILL: $_roomName${who.isEmpty ? '' : ' ($who)'}*\n------------------\n');
     for (final item in _transactions.reversed) {
       final isCredit = item['is_advance'] == 1;
       final amt = (item['amount'] as num?)?.toInt() ?? 0;
@@ -418,26 +433,104 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
     }
   }
 
-  // ---------- Washing ----------
-  Future<void> _toggleWashing(bool value) async {
-    final date =
-        value ? DateFormat('dd MMM yyyy').format(DateTime.now()) : '';
-    await DatabaseHelper.instance.updateWashingStatus(_chestNo, value, date);
-    _refreshData();
+  // ---------- Dhulai (Washing) — ON/OFF, counting, monthly cycle ----------
+  static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  /// Purana format ('dd MMM yyyy') bhi chalega, naya ISO ('yyyy-MM-dd') bhi.
+  DateTime? _parseWashingDate(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return null;
+    final iso = DateTime.tryParse(s);
+    if (iso != null) return _dateOnly(iso);
+    try {
+      return _dateOnly(DateFormat('dd MMM yyyy').parse(s));
+    } catch (_) {
+      return null;
+    }
   }
 
+  static DateTime _addOneMonth(DateTime d) {
+    final target = DateTime(d.year, d.month + 1, 1);
+    final lastDayOfTarget = DateTime(target.year, target.month + 1, 0).day;
+    final day = d.day <= lastDayOfTarget ? d.day : lastDayOfTarget;
+    return DateTime(target.year, target.month, day);
+  }
+
+  String _fmtDay(DateTime d) => DateFormat('dd MMM yyyy').format(d);
+  String _isoOf(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  Future<void> _toggleWashing(bool value) async {
+    if (value) {
+      // ON: counting aaj se shuru (chahe to neeche Date Edit se pichhli date kar sakte ho)
+      await DatabaseHelper.instance.setWashingSettings(
+        _chestNo,
+        isOn: true,
+        startDateIso: _isoOf(_dateOnly(DateTime.now())),
+      );
+      _refreshData();
+      _showMsg(
+          'Dhulai shuru ✅ Aaj se din count honge. Galat date hai to DATE EDIT karo.');
+    } else {
+      await DatabaseHelper.instance
+          .setWashingSettings(_chestNo, isOn: false);
+      _refreshData();
+      _showMsg('Dhulai band kar di');
+    }
+  }
+
+  /// Bhoolne par baad me sahi start date dalne ke liye (calendar se chuno).
+  Future<void> _editWashingDate() async {
+    final today = _dateOnly(DateTime.now());
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _washingStart ?? today,
+      firstDate: DateTime(2020),
+      lastDate: today,
+      helpText: 'Dhulai kab se shuru hui thi?',
+    );
+    if (picked == null) return;
+    await DatabaseHelper.instance.setWashingSettings(
+      _chestNo,
+      isOn: true,
+      startDateIso: _isoOf(_dateOnly(picked)),
+    );
+    _refreshData();
+    _showMsg('Dhulai ki start date ${_fmtDay(picked)} kar di ✅');
+  }
+
+  /// Mahine ka dhulai bill hisaab me jodo — cycle apne aap aage badh jayega.
   Future<void> _showWashingBillDialog() async {
-    final c = TextEditingController(text: '1500');
+    final c = TextEditingController(text: '$_washingAmount');
+    final start = _washingStart;
+    final periodText = start == null
+        ? ''
+        : '${_fmtDay(start)} – ${_fmtDay(_addOneMonth(start).subtract(const Duration(days: 1)))}';
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Washing Bill'),
-        content: TextField(
-          controller: c,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-              labelText: 'Washing Charge (₹)', border: OutlineInputBorder()),
+        title: const Text('Dhulai (Washing) Bill'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (periodText.isNotEmpty) ...[
+              Text('Is mahine ka cycle: $periodText'),
+              const SizedBox(height: 10),
+            ],
+            TextField(
+              controller: c,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: 'Dhulai Charge (₹ / mahina)',
+                  border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Bill judte hi agla mahina cycle usi date se apne aap shuru ho jayega.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -450,13 +543,32 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
                 _showMsg('Sahi amount daalo', isError: true);
                 return;
               }
+              final title = periodText.isEmpty
+                  ? 'Dhulai (Washing)'
+                  : 'Dhulai (Washing) $periodText';
               await DatabaseHelper.instance
-                  .addTransaction(_chestNo, 'Washing Charge', amt, false);
+                  .addTransaction(_chestNo, title, amt, false);
+              // Amount yaad rakho + agla cycle shuru karo
+              if (start != null) {
+                await DatabaseHelper.instance.setWashingSettings(
+                  _chestNo,
+                  isOn: true,
+                  startDateIso: _isoOf(_addOneMonth(start)),
+                  amount: amt,
+                );
+              } else {
+                await DatabaseHelper.instance.setWashingSettings(
+                  _chestNo,
+                  isOn: _isWashingOn,
+                  amount: amt,
+                );
+              }
               if (!ctx.mounted) return;
               Navigator.pop(ctx);
               _refreshData();
+              _showMsg('Dhulai bill jud gaya ✅ Agla cycle chalu ho gaya.');
             },
-            child: const Text('ADD'),
+            child: const Text('BILL ADD KARO'),
           ),
         ],
       ),
@@ -648,8 +760,10 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
       },
       localeId: 'en_IN',
       listenFor: const Duration(seconds: 15),
-      cancelOnError: false,
-      partialResults: false,
+      listenOptions: SpeechListenOptions(
+        cancelOnError: false,
+        partialResults: false,
+      ),
     );
   }
 
@@ -805,6 +919,42 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
     q.dispose();
   }
 
+  Widget _washingStatusText() {
+    final title =
+        'Dhulai (Washing) — ${AppHelpers.formatRupees(_washingAmount)}/mahina';
+    String sub;
+    Color subColor = Colors.grey;
+    if (!_isWashingOn) {
+      sub = 'OFF — Sir ne dhulai nahi rakhi hai';
+    } else if (_washingStart == null) {
+      sub = 'ON — start date set karo (DATE EDIT)';
+      subColor = Colors.orange;
+    } else {
+      final today = _dateOnly(DateTime.now());
+      final dayCount = today.difference(_washingStart!).inDays + 1;
+      final dueDate = _addOneMonth(_washingStart!);
+      final daysLeft = dueDate.difference(today).inDays;
+      if (daysLeft > 0) {
+        sub =
+            'Start ${_fmtDay(_washingStart!)} • Day $dayCount • Bill due ${_fmtDay(dueDate)} ($daysLeft din baki)';
+      } else if (daysLeft == 0) {
+        sub = 'Start ${_fmtDay(_washingStart!)} • Day $dayCount • Aaj bill due hai!';
+        subColor = Colors.orange;
+      } else {
+        sub =
+            'Start ${_fmtDay(_washingStart!)} • Day $dayCount • Due nikal gaya (${-daysLeft} din upar) — BILL ADD karo';
+        subColor = Colors.red;
+      }
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        Text(sub, style: TextStyle(fontSize: 12, color: subColor)),
+      ],
+    );
+  }
+
   // ---------- Build ----------
   @override
   Widget build(BuildContext context) {
@@ -813,7 +963,24 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_roomName),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_roomName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 18)),
+            if (_roomNo.isNotEmpty || _chestDisplay.isNotEmpty)
+              Text(
+                [
+                  if (_roomNo.isNotEmpty) 'Room $_roomNo',
+                  if (_chestDisplay.isNotEmpty) 'Chest $_chestDisplay',
+                ].join(' • '),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+              ),
+          ],
+        ),
         actions: [
           IconButton(
               onPressed: _speakBill,
@@ -891,40 +1058,42 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
             ),
           ),
 
-          // Washing section (UI pehle bana hi nahi tha — ab complete hai)
+          // Dhulai (Washing) section — ON/OFF, din counting, due date, date edit
           Container(
             margin: const EdgeInsets.symmetric(horizontal: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
             decoration: BoxDecoration(
               color: isDark ? Colors.grey[800] : Colors.white,
               borderRadius: BorderRadius.circular(15),
               boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 5)],
             ),
-            child: Row(
+            child: Column(
               children: [
-                Icon(Icons.local_laundry_service,
-                    color: _isWashingOn ? Colors.blue : Colors.grey),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Washing',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      Text(
-                        _isWashingOn
-                            ? 'ON — $_washingStartDate se chal raha hai'
-                            : 'OFF',
-                        style: const TextStyle(
-                            fontSize: 12, color: Colors.grey),
-                      ),
-                    ],
-                  ),
+                Row(
+                  children: [
+                    Icon(Icons.local_laundry_service,
+                        color: _isWashingOn ? Colors.blue : Colors.grey),
+                    const SizedBox(width: 10),
+                    Expanded(child: _washingStatusText()),
+                    Switch(value: _isWashingOn, onChanged: _toggleWashing),
+                  ],
                 ),
-                TextButton(
-                    onPressed: _showWashingBillDialog,
-                    child: const Text('BILL')),
-                Switch(value: _isWashingOn, onChanged: _toggleWashing),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (_isWashingOn)
+                      TextButton.icon(
+                        onPressed: _editWashingDate,
+                        icon: const Icon(Icons.edit_calendar, size: 16),
+                        label: const Text('DATE EDIT'),
+                      ),
+                    TextButton.icon(
+                      onPressed: _showWashingBillDialog,
+                      icon: const Icon(Icons.receipt_long, size: 16),
+                      label: const Text('BILL ADD'),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),

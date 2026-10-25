@@ -14,7 +14,11 @@ class DatabaseHelper {
   // Pehle har change par naya file naam ban raha tha jisse purana data
   // gayab ho jata tha — ab proper version + onUpgrade use hota hai.
   static const String _dbFileName = 'chest_buddy_v7.db';
-  static const int _dbVersion = 2; // v2: checkouts (history) table + index
+  // v2: checkouts (history) table + index
+  // v3: Sir ka model — chest_no (display) aur room_no alag fields, washing_amount.
+  //     `number` ab andar ka stable ID hai (transactions usi se jude rahte hain),
+  //     taaki Sir ka room/chest badalne par bhi purana hisaab na toote.
+  static const int _dbVersion = 3;
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -35,15 +39,18 @@ class DatabaseHelper {
 
   Future<void> _createDB(Database db, int version) async {
     await _createTables(db);
-    // Default Rooms (1-4)
+    // Default 4 Sir (ek room boy aam taur par 4 Sir ko dekhta hai)
     final batch = db.batch();
     for (int i = 1; i <= 4; i++) {
       batch.insert('chests', {
         'number': i,
-        'name': 'Room $i',
+        'name': 'Sir $i',
         'phone': '',
         'is_washing_on': 0,
         'image_path': null,
+        'chest_no': '$i',
+        'room_no': '',
+        'washing_amount': 2000,
       });
     }
     // Default Menu Items
@@ -72,7 +79,10 @@ class DatabaseHelper {
         phone TEXT,
         is_washing_on INTEGER DEFAULT 0,
         washing_start_date TEXT,
-        image_path TEXT
+        image_path TEXT,
+        chest_no TEXT,
+        room_no TEXT,
+        washing_amount INTEGER DEFAULT 2000
       )
     ''');
     await db.execute('''
@@ -114,6 +124,29 @@ class DatabaseHelper {
     if (oldVersion < 2) {
       // Purani tables/data ko haath lagaye bina sirf nayi cheezein add karo
       await _createTables(db);
+    }
+    if (oldVersion < 3) {
+      // chests table me naye column jodo (data bilkul same rahega)
+      await _addColumnIfMissing(db, 'chests', 'chest_no', 'TEXT');
+      await _addColumnIfMissing(db, 'chests', 'room_no', 'TEXT');
+      await _addColumnIfMissing(
+          db, 'chests', 'washing_amount', 'INTEGER DEFAULT 2000');
+      // Purane rows: display chest number = unka purana number hi rahe
+      await db.execute(
+          "UPDATE chests SET chest_no = CAST(number AS TEXT) WHERE chest_no IS NULL OR chest_no = ''");
+      await db.execute(
+          "UPDATE chests SET room_no = '' WHERE room_no IS NULL");
+      await db.execute(
+          'UPDATE chests SET washing_amount = 2000 WHERE washing_amount IS NULL');
+    }
+  }
+
+  Future<void> _addColumnIfMissing(
+      Database db, String table, String column, String typeDef) async {
+    final cols = await db.rawQuery('PRAGMA table_info($table)');
+    final exists = cols.any((c) => c['name'] == column);
+    if (!exists) {
+      await db.execute('ALTER TABLE $table ADD COLUMN $column $typeDef');
     }
   }
 
@@ -173,10 +206,22 @@ class DatabaseHelper {
         }
       }
 
+      // History me pehchan saaf rahe: "Sir Name • Room 210 • Chest 5"
+      final namePart = (chest['name']?.toString().isNotEmpty ?? false)
+          ? chest['name'].toString()
+          : 'Sir $chestNo';
+      final roomPart = chest['room_no']?.toString() ?? '';
+      final chestPart = chest['chest_no']?.toString() ?? '';
+      final displayName = [
+        namePart,
+        if (roomPart.isNotEmpty) 'Room $roomPart',
+        if (chestPart.isNotEmpty) 'Chest $chestPart',
+      ].join(' • ');
+
       if (txns.isNotEmpty) {
         await txn.insert('checkouts', {
           'chest_no': chestNo,
-          'room_name': chest['name'] ?? 'Room $chestNo',
+          'room_name': displayName,
           'phone': chest['phone'] ?? '',
           'total_expense': expense,
           'total_paid': paid,
@@ -277,7 +322,8 @@ class DatabaseHelper {
   Future<List<Map<String, dynamic>>> getAllTransactionsForReport() async {
     final db = await instance.database;
     return await db.rawQuery('''
-      SELECT t.date, t.chest_no, c.name, t.title, t.amount, t.is_advance
+      SELECT t.date, t.chest_no, c.name, c.room_no,
+             c.chest_no AS chest_display, t.title, t.amount, t.is_advance
       FROM transactions t
       LEFT JOIN chests c ON t.chest_no = c.number
       ORDER BY t.date DESC, t.id DESC
@@ -320,14 +366,75 @@ class DatabaseHelper {
   }
 
   Future<void> updateChestDetails(
-      int number, String newName, String newPhone) async {
+    int number,
+    String newName,
+    String newPhone, {
+    String? chestNo,
+    String? roomNo,
+  }) async {
     final db = await instance.database;
+    final values = <String, Object?>{'name': newName, 'phone': newPhone};
+    if (chestNo != null) values['chest_no'] = chestNo;
+    if (roomNo != null) values['room_no'] = roomNo;
     await db.update(
       'chests',
-      {'name': newName, 'phone': newPhone},
+      values,
       where: 'number = ?',
       whereArgs: [number],
     );
+  }
+
+  /// Kya ye display chest number pehle se kisi aur Sir ka hai?
+  Future<bool> isChestNoTaken(String chestNo, {int? excludingId}) async {
+    final trimmed = chestNo.trim();
+    if (trimmed.isEmpty) return false;
+    final db = await instance.database;
+    final rows = await db.query('chests',
+        where: 'chest_no = ?', whereArgs: [trimmed]);
+    return rows.any((r) => r['number'] != excludingId);
+  }
+
+  /// Naya Sir add karo. Internal ID khud banta hai — room/chest numbers
+  /// random ho sakte hain aur baad me badle bhi ja sakte hain.
+  /// Return: naya ID, ya null agar chest number duplicate hai.
+  Future<int?> addPerson({
+    required String name,
+    required String chestNo,
+    String roomNo = '',
+    String phone = '',
+  }) async {
+    if (await isChestNoTaken(chestNo)) return null;
+    final db = await instance.database;
+    final maxRows =
+        await db.rawQuery('SELECT COALESCE(MAX(number), 0) AS m FROM chests');
+    final newId = _toInt(maxRows.first['m']) + 1;
+    await db.insert('chests', {
+      'number': newId,
+      'name': name.trim(),
+      'phone': phone.trim(),
+      'is_washing_on': 0,
+      'image_path': null,
+      'chest_no': chestNo.trim(),
+      'room_no': roomNo.trim(),
+      'washing_amount': 2000,
+    });
+    return newId;
+  }
+
+  /// Dhulai (washing) settings: ON/OFF + start date (ISO) + monthly amount.
+  Future<void> setWashingSettings(
+    int number, {
+    required bool isOn,
+    String? startDateIso,
+    int? amount,
+  }) async {
+    final db = await instance.database;
+    final values = <String, Object?>{'is_washing_on': isOn ? 1 : 0};
+    if (startDateIso != null) values['washing_start_date'] = startDateIso;
+    if (!isOn) values['washing_start_date'] = null;
+    if (amount != null) values['washing_amount'] = amount;
+    await db.update('chests', values,
+        where: 'number = ?', whereArgs: [number]);
   }
 
   Future<void> updateChestImage(int number, String? path) async {

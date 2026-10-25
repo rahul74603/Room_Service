@@ -8,6 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import '../app_version.dart';
 import '../data/database_helper.dart';
 import '../main.dart';
 import '../utils/helpers.dart';
@@ -140,8 +141,10 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       localeId: localeId,
       listenFor: const Duration(seconds: 15),
-      cancelOnError: false,
-      partialResults: true, // bolte waqt live text dikhega
+      listenOptions: SpeechListenOptions(
+        cancelOnError: false,
+        partialResults: true, // bolte waqt live text dikhega
+      ),
     );
   }
 
@@ -165,6 +168,23 @@ class _HomeScreenState extends State<HomeScreen> {
       final paid = (row['paid'] as num?)?.toInt() ?? 0;
       dues[no] = expense - paid;
     }
+    // Ek room ke dono Sir paas-paas dikhen: pehle Room No., fir Chest No.
+    int numKey(Object? v) {
+      final m = RegExp(r'\d+').firstMatch(v?.toString() ?? '');
+      return m == null ? 1 << 30 : int.parse(m.group(0)!);
+    }
+
+    chests.sort((a, b) {
+      var c = numKey(a['room_no']).compareTo(numKey(b['room_no']));
+      if (c != 0) return c;
+      c = (a['room_no']?.toString() ?? '')
+          .compareTo(b['room_no']?.toString() ?? '');
+      if (c != 0) return c;
+      c = numKey(a['chest_no']).compareTo(numKey(b['chest_no']));
+      if (c != 0) return c;
+      return ((a['number'] as num?)?.toInt() ?? 0)
+          .compareTo((b['number'] as num?)?.toInt() ?? 0);
+    });
     setState(() {
       _chests = chests;
       _notes = notes;
@@ -238,12 +258,14 @@ class _HomeScreenState extends State<HomeScreen> {
         _showMsg('Report ke liye abhi koi data nahi hai', isError: true);
         return;
       }
-      final buffer = StringBuffer('Date,Room No,Room Name,Item,Type,Amount\n');
+      final buffer =
+          StringBuffer('Date,Sir Name,Room No,Chest No,Item,Type,Amount\n');
       for (final row in allData) {
         buffer.writeln([
           AppHelpers.csvEscape(AppHelpers.formatDateTime(row['date'] as String?)),
-          AppHelpers.csvEscape(row['chest_no']),
-          AppHelpers.csvEscape(row['name'] ?? 'Room ${row['chest_no']}'),
+          AppHelpers.csvEscape(row['name'] ?? 'Sir ${row['chest_no']}'),
+          AppHelpers.csvEscape(row['room_no'] ?? ''),
+          AppHelpers.csvEscape(row['chest_display'] ?? row['chest_no']),
           AppHelpers.csvEscape(row['title']),
           row['is_advance'] == 1 ? 'Jama (Paid)' : 'Kharcha',
           AppHelpers.csvEscape(row['amount']),
@@ -253,25 +275,112 @@ class _HomeScreenState extends State<HomeScreen> {
       final path =
           '${dir.path}/Hotel_Report_${DateTime.now().millisecondsSinceEpoch}.csv';
       await File(path).writeAsString(buffer.toString());
-      await Share.shareXFiles([XFile(path)], text: 'Hotel Report (CSV)');
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(path)], text: 'Hotel Report (CSV)'),
+      );
     } catch (e) {
       _showMsg('Error: $e', isError: true);
     }
   }
 
   // ---------- Voice processing ----------
+  static String _personSubline(Map<String, dynamic> p) {
+    final room = p['room_no']?.toString() ?? '';
+    final chest = p['chest_no']?.toString() ?? '';
+    return [
+      if (room.isNotEmpty) 'Room $room',
+      if (chest.isNotEmpty) 'Chest $chest',
+    ].join(' • ');
+  }
+
+  /// Boli gayi pehchan (chest/room) se Sir ki list nikalo.
+  /// Chest No. sabse pakka — sirf Room No. bola ho aur 2 Sir hon to
+  /// do naam aayenge, user chunega.
+  List<Map<String, dynamic>> _resolvePersons(int? chestNo, int? roomNo) {
+    bool matchNo(Object? v, int n) =>
+        v != null && int.tryParse(v.toString().trim()) == n;
+    if (chestNo != null) {
+      final byChest =
+          _chests.where((c) => matchNo(c['chest_no'], chestNo)).toList();
+      if (byChest.isNotEmpty) return byChest;
+    }
+    if (roomNo != null) {
+      final byRoom =
+          _chests.where((c) => matchNo(c['room_no'], roomNo)).toList();
+      if (byRoom.isNotEmpty) return byRoom;
+    }
+    // Purani aadat wala fallback: jo number bola, use ID/chest/room kahi bhi dhundo
+    final anyNo = chestNo ?? roomNo;
+    if (anyNo != null) {
+      return _chests
+          .where((c) =>
+              matchNo(c['number'], anyNo) ||
+              matchNo(c['chest_no'], anyNo) ||
+              matchNo(c['room_no'], anyNo))
+          .toList();
+    }
+    return [];
+  }
+
+  Future<Map<String, dynamic>?> _choosePerson(
+      List<Map<String, dynamic>> persons) {
+    return showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: Text('Kis Sir ke khate me?',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            ),
+            ...persons.map(
+              (p) => ListTile(
+                leading: const Icon(Icons.person),
+                title: Text(p['name']?.toString() ?? 'Sir'),
+                subtitle: Text(_personSubline(p)),
+                onTap: () => Navigator.pop(ctx, p),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _processSmartVoice(String text) async {
     if (text.trim().isEmpty) return;
     final result = VoiceParser.parseRequest(text);
     final int? chestNo = result['chestNumber'] as int?;
-    if (chestNo == null) {
+    final int? roomNo = result['roomNumber'] as int?;
+
+    if (chestNo == null && roomNo == null) {
       await DatabaseHelper.instance.addNote(text.trim());
       _refreshAll();
-      _showMsg('Room number samajh nahi aaya — Note save kar diya 📝');
+      _showMsg('Sir ki pehchan samajh nahi aayi — Note save kar diya 📝');
       return;
     }
+
+    final matches = _resolvePersons(chestNo, roomNo);
+    if (matches.isEmpty) {
+      await DatabaseHelper.instance.addNote(text.trim());
+      _refreshAll();
+      _showMsg(
+          'Chest ${chestNo ?? ''} / Room ${roomNo ?? ''} wala koi Sir nahi mila — Note save kar diya 📝',
+          isError: true);
+      return;
+    }
+
+    var person = matches.first;
+    if (matches.length > 1) {
+      final chosen = await _choosePerson(matches);
+      if (chosen == null) return; // user ne cancel kiya
+      person = chosen;
+    }
+
     _showVoiceConfirmDialog(
-      chestNo,
+      person,
       result['title'] as String,
       (result['amount'] as int?) ?? 0,
       (result['quantity'] as int?) ?? 1,
@@ -279,13 +388,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _showVoiceConfirmDialog(int chestNo, String item, int amount,
-      int quantity, bool isPaymentHint) async {
-    final chestExists = _chests.any((c) => c['number'] == chestNo);
-    if (!chestExists) {
-      _showMsg('Room $chestNo nahi mila!', isError: true);
-      return;
-    }
+  Future<void> _showVoiceConfirmDialog(Map<String, dynamic> person,
+      String item, int amount, int quantity, bool isPaymentHint) async {
+    final chestNo = (person['number'] as num).toInt();
+    final personName = person['name']?.toString() ?? 'Sir';
+    final personSubline = _personSubline(person);
     final i = TextEditingController(text: item);
     final p = TextEditingController(text: amount == 0 ? '' : '$amount');
     final q = TextEditingController(text: '$quantity');
@@ -297,11 +404,11 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (dialogCtx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           title: Text(
-            isPayment ? 'Room $chestNo — JAMA' : 'Room $chestNo — KHARCHA',
+            '$personName${personSubline.isEmpty ? '' : ' ($personSubline)'} — ${isPayment ? 'JAMA' : 'KHARCHA'}',
             style: TextStyle(
               color: isPayment ? Colors.green : Colors.red,
               fontWeight: FontWeight.bold,
-              fontSize: 18,
+              fontSize: 16,
             ),
           ),
           content: Column(
@@ -429,6 +536,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _showEditChestDialog(Map<String, dynamic> chest) async {
     final number = (chest['number'] as num).toInt();
     final n = TextEditingController(text: chest['name']?.toString() ?? '');
+    final chestC =
+        TextEditingController(text: chest['chest_no']?.toString() ?? '');
+    final roomC =
+        TextEditingController(text: chest['room_no']?.toString() ?? '');
     final p = TextEditingController(text: chest['phone']?.toString() ?? '');
     final hasPhoto =
         (chest['image_path'] as String?)?.isNotEmpty ?? false;
@@ -436,13 +547,32 @@ class _HomeScreenState extends State<HomeScreen> {
     await showDialog(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        title: Text('Room $number Settings'),
+        title: Text('${chest['name']?.toString() ?? 'Sir'} — Settings'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
                 controller: n,
-                decoration: const InputDecoration(labelText: 'Guest Name')),
+                decoration: const InputDecoration(labelText: 'Sir ka naam')),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: chestC,
+                    decoration:
+                        const InputDecoration(labelText: 'Chest No.'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: roomC,
+                    decoration: const InputDecoration(labelText: 'Room No.'),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 10),
             TextField(
               controller: p,
@@ -496,13 +626,28 @@ class _HomeScreenState extends State<HomeScreen> {
           ElevatedButton(
             onPressed: () async {
               var name = n.text.trim();
-              if (name.isEmpty) name = 'Room $number';
-              await DatabaseHelper.instance
-                  .updateChestDetails(number, name, p.text.trim());
+              if (name.isEmpty) name = 'Sir $number';
+              final newChestNo = chestC.text.trim();
+              // Chest number kisi aur Sir ka ho to roko (galti se hisaab mix na ho)
+              if (newChestNo.isNotEmpty &&
+                  await DatabaseHelper.instance
+                      .isChestNoTaken(newChestNo, excludingId: number)) {
+                _showMsg(
+                    'Chest No. $newChestNo pehle se kisi aur Sir ka hai!',
+                    isError: true);
+                return;
+              }
+              await DatabaseHelper.instance.updateChestDetails(
+                number,
+                name,
+                p.text.trim(),
+                chestNo: newChestNo,
+                roomNo: roomC.text.trim(),
+              );
               if (!dialogCtx.mounted) return;
               Navigator.pop(dialogCtx);
               _refreshAll();
-              _showMsg('Room Updated ✅');
+              _showMsg('Sir details update ho gayi ✅');
             },
             child: const Text('UPDATE'),
           ),
@@ -510,6 +655,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     n.dispose();
+    chestC.dispose();
+    roomC.dispose();
     p.dispose();
   }
 
@@ -518,9 +665,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: Text('Room $number Delete Karein?'),
+            title: Text('${chest['name']?.toString() ?? 'Sir'} ko hatayein?'),
             content: const Text(
-                'Is room ka saara hisaab bhi delete ho jayega. Ye wapas nahi aayega!'),
+                'Is Sir ka saara hisaab bhi delete ho jayega. Ye wapas nahi aayega! (Sir sirf badle hain to pehle Checkout karke naam badalna behtar hai.)'),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
@@ -538,7 +685,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!confirmed) return;
     await DatabaseHelper.instance.deleteChest(number);
     _refreshAll();
-    _showMsg('Room $number delete ho gaya');
+    _showMsg('${chest['name']?.toString() ?? 'Sir'} hata diye gaye');
   }
 
   // ---------- Notes ----------
@@ -633,13 +780,26 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: bgColor,
       appBar: AppBar(
-        title: Text(
-          'RoomService Pro',
-          style: GoogleFonts.poppins(
-            fontWeight: FontWeight.w700,
-            fontSize: 24,
-            color: isDark ? Colors.white : Colors.black87,
-          ),
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'RoomService Pro',
+              style: GoogleFonts.poppins(
+                fontWeight: FontWeight.w700,
+                fontSize: 22,
+                color: isDark ? Colors.white : Colors.black87,
+              ),
+            ),
+            Text(
+              'Version $appVersion',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w400,
+                color: isDark ? Colors.white54 : Colors.black45,
+              ),
+            ),
+          ],
         ),
         centerTitle: true,
         backgroundColor: Colors.transparent,
@@ -783,7 +943,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Total Lena (Sab Rooms)',
+              const Text('Total Lena (Sab Sir)',
                   style: TextStyle(fontSize: 12, color: Colors.grey)),
               Text(
                 AppHelpers.formatRupees(totalDue),
@@ -870,11 +1030,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildChestCard(Map<String, dynamic> chest, Color themeColor) {
     final number = (chest['number'] as num).toInt();
-    final customName = chest['name']?.toString() ?? '';
-    final isDefaultName = customName == 'Room $number';
+    final sirName = chest['name']?.toString() ?? 'Sir';
+    final chestDisplay = (chest['chest_no']?.toString().isNotEmpty ?? false)
+        ? chest['chest_no'].toString()
+        : '$number';
+    final subline = _personSubline(chest);
+    final washingOn = chest['is_washing_on'] == 1;
     final String? imagePath = chest['image_path'] as String?;
-    final hasImage =
-        imagePath != null && imagePath.isNotEmpty && File(imagePath).existsSync();
+    final imageFile = (imagePath != null && imagePath.isNotEmpty)
+        ? File(imagePath)
+        : null;
+    final hasImage = imageFile != null && imageFile.existsSync();
     final due = _roomDues[number] ?? 0;
 
     return InkWell(
@@ -928,8 +1094,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               : Colors.white.withValues(alpha: 0.2),
                           shape: BoxShape.circle,
                         ),
-                        child:
-                            const Icon(Icons.bed, color: Colors.white, size: 20),
+                        child: const Icon(Icons.person,
+                            color: Colors.white, size: 20),
                       ),
                       Row(
                         children: [
@@ -941,10 +1107,11 @@ class _HomeScreenState extends State<HomeScreen> {
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
-                              '$number',
+                              'Chest $chestDisplay',
                               style: const TextStyle(
                                   color: Colors.white,
-                                  fontWeight: FontWeight.bold),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12),
                             ),
                           ),
                           const SizedBox(width: 6),
@@ -968,24 +1135,45 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        isDefaultName ? 'Room' : customName,
+                        sirName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.poppins(
-                          fontSize: 14,
-                          color: Colors.white70,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      Text(
-                        isDefaultName ? '$number' : 'Room $number',
-                        style: GoogleFonts.poppins(
-                          fontSize: isDefaultName ? 28 : 16,
+                          fontSize: 20,
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
-                          height: 1.0,
+                          height: 1.1,
                         ),
                       ),
+                      if (subline.isNotEmpty)
+                        Text(
+                          subline,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: Colors.white70,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      if (washingOn) ...[
+                        const SizedBox(height: 4),
+                        const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.local_laundry_service,
+                                color: Colors.white, size: 13),
+                            SizedBox(width: 4),
+                            Text(
+                              'Dhulai ON',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ],
                       if (due != 0) ...[
                         const SizedBox(height: 6),
                         Container(
@@ -1032,8 +1220,8 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.add, size: 40, color: Colors.grey),
-              Text('Add Room',
+              Icon(Icons.person_add, size: 40, color: Colors.grey),
+              Text('Sir Add Karo',
                   style:
                       TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
             ],
@@ -1044,16 +1232,48 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showAddChestDialog() async {
-    final c = TextEditingController();
+    final nameC = TextEditingController();
+    final chestC = TextEditingController();
+    final roomC = TextEditingController();
+    final phoneC = TextEditingController();
     await showDialog(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        title: const Text('New Room'),
-        content: TextField(
-          controller: c,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'Room Number'),
+        title: const Text('Naye Sir Add Karo'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameC,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Sir ka naam *'),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: chestC,
+                    decoration:
+                        const InputDecoration(labelText: 'Chest No. *'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: roomC,
+                    decoration: const InputDecoration(labelText: 'Room No.'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: phoneC,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(labelText: 'Phone (optional)'),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -1061,19 +1281,31 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Text('CANCEL')),
           ElevatedButton(
             onPressed: () async {
-              final number = int.tryParse(c.text.trim());
-              if (number == null || number <= 0) {
-                _showMsg('Sahi room number daalo', isError: true);
+              final name = nameC.text.trim();
+              final chestNo = chestC.text.trim();
+              if (name.isEmpty) {
+                _showMsg('Sir ka naam daalo', isError: true);
                 return;
               }
-              final added = await DatabaseHelper.instance.addChest(number);
+              if (chestNo.isEmpty) {
+                _showMsg('Chest No. daalo (yehi pakki pehchan hai)',
+                    isError: true);
+                return;
+              }
+              final newId = await DatabaseHelper.instance.addPerson(
+                name: name,
+                chestNo: chestNo,
+                roomNo: roomC.text.trim(),
+                phone: phoneC.text.trim(),
+              );
               if (!dialogCtx.mounted) return;
               Navigator.pop(dialogCtx);
-              if (added) {
+              if (newId != null) {
                 _refreshAll();
-                _showMsg('Room $number add ho gaya ✅');
+                _showMsg('$name add ho gaye ✅');
               } else {
-                _showMsg('Room $number pehle se maujood hai!', isError: true);
+                _showMsg('Chest No. $chestNo pehle se kisi Sir ka hai!',
+                    isError: true);
               }
             },
             child: const Text('ADD'),
@@ -1081,6 +1313,9 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
-    c.dispose();
+    nameC.dispose();
+    chestC.dispose();
+    roomC.dispose();
+    phoneC.dispose();
   }
 }

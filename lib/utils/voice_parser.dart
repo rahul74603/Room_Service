@@ -7,8 +7,11 @@
 ///  - "dedh sau ka doodh room 2"  -> room 2, Doodh, ₹150
 ///  - "रूम २ चाय २० रुपये"         -> room 2, चाय, ₹20
 ///
-/// Return map: chestNumber (int?), amount (int?), quantity (int),
-///             title (String), isPaymentHint (bool), original (String)
+/// Return map: chestNumber (int? = Chest No.), roomNumber (int? = Room No.),
+///             amount (int?), quantity (int), title (String),
+///             isPaymentHint (bool), original (String)
+/// Note: "room 210 chest 5" me dono alag nikalte hain — Sir dhundhne ki
+/// zimmedari UI ki hai (chest number sabse pakki pehchan hai).
 class VoiceParser {
   static const Map<String, String> _numMap = {
     // Hinglish
@@ -107,19 +110,42 @@ class VoiceParser {
 
     var s = tokens.join(' ');
 
-    // --- STEP A: ROOM / CHEST NUMBER ---
+    // --- STEP A: CHEST NUMBER aur ROOM NUMBER (alag-alag) ---
     int? chestNumber;
-    final chestPatterns = [
-      RegExp(r'(?:room|kamra|chest|ch|box|रूम|कमरा|कमरे|चेस्ट)\s*(?:number|no|नंबर|नम्बर)?\s*(\d+)'),
-      RegExp(r'(\d+)\s*(?:number|नंबर|नम्बर)(?:\s*(?:room|रूम|वाला))?'),
-      RegExp(r'(?:number|no|नंबर|नम्बर)\s*(\d+)'),
-    ];
-    for (final pat in chestPatterns) {
-      final m = pat.firstMatch(s);
-      if (m != null) {
-        chestNumber = int.parse(m.group(1)!);
-        s = '${s.substring(0, m.start)} ${s.substring(m.end)}';
-        break;
+    int? roomNumber;
+
+    // Pehle Chest No. — "chest 5", "ch 5", "box 5", "चेस्ट ५"
+    final chestMatch = RegExp(
+            r'(?:chest|ch|box|चेस्ट)\s*(?:number|no|नंबर|नम्बर)?\s*(\d+)')
+        .firstMatch(s);
+    if (chestMatch != null) {
+      chestNumber = int.parse(chestMatch.group(1)!);
+      s = '${s.substring(0, chestMatch.start)} ${s.substring(chestMatch.end)}';
+    }
+
+    // Fir Room No. — "room 210", "रूम २१०"
+    final roomMatch = RegExp(
+            r'(?:room|kamra|रूम|कमरा|कमरे)\s*(?:number|no|नंबर|नम्बर)?\s*(\d+)')
+        .firstMatch(s);
+    if (roomMatch != null) {
+      roomNumber = int.parse(roomMatch.group(1)!);
+      s = '${s.substring(0, roomMatch.start)} ${s.substring(roomMatch.end)}';
+    }
+
+    // Dono me se kuch na mila ho to ulta/saada pattern: "5 number" ya "number 5"
+    // (academy me akele "X number" aksar chest number hota hai)
+    if (chestNumber == null && roomNumber == null) {
+      final altPatterns = [
+        RegExp(r'(\d+)\s*(?:number|नंबर|नम्बर)(?:\s*(?:wala))?'),
+        RegExp(r'(?:number|no|नंबर|नम्बर)\s*(\d+)'),
+      ];
+      for (final pat in altPatterns) {
+        final m = pat.firstMatch(s);
+        if (m != null) {
+          chestNumber = int.parse(m.group(1)!);
+          s = '${s.substring(0, m.start)} ${s.substring(m.end)}';
+          break;
+        }
       }
     }
     // Room number nikalne ke baad bache number dobara merge karo (1000 500 -> 1500)
@@ -187,6 +213,7 @@ class VoiceParser {
 
     return {
       'chestNumber': chestNumber,
+      'roomNumber': roomNumber,
       'amount': amount,
       'quantity': quantity,
       'title': title,

@@ -1,0 +1,91 @@
+name: Build Android APK (RoomService Pro)
+
+# Kab chalega:
+#  - main / arena branch par push  -> sirf check + test APK (Actions artifact)
+#  - GitHub Release publish hone par -> APK banakar usi Release me attach
+#    (wahi se phone par direct download hota hai)
+on:
+  push:
+    branches:
+      - main
+      - "arena/**"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Java 17 setup
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Flutter setup
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Dependencies download
+        run: flutter pub get
+
+      - name: Code check (analyze)
+        run: flutter analyze --no-fatal-infos
+
+      - name: Tests
+        run: flutter test
+
+      - name: Signing setup (key repo me locked hai, password Secret se)
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_PASSWORD" ]; then
+            cat > android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEYSTORE_PASSWORD
+          keyAlias=upload
+          storeFile=upload-keystore.p12
+          EOF
+            echo "Permanent signing ready — updates purane version ke upar install honge."
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            echo "::error::KEYSTORE_PASSWORD secret missing hai! Release roki gayi — pehle repo Settings > Secrets > Actions me KEYSTORE_PASSWORD add karo, warna users ko update par app uninstall karna padega."
+            exit 1
+          else
+            echo "::warning::KEYSTORE_PASSWORD secret nahi mila — ye sirf test build hai, debug key se sign hoga (install mat karna)."
+          fi
+
+      - name: Release APK build
+        run: flutter build apk --release
+
+      - name: APK ko version wala naam do
+        id: apk
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d'+' -f1)
+          mkdir -p release-out
+          cp build/app/outputs/flutter-apk/app-release.apk "release-out/RoomServicePro-v${VERSION}.apk"
+          echo "apk_path=release-out/RoomServicePro-v${VERSION}.apk" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: APK artifact save (har build par)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoomServicePro-v${{ steps.apk.outputs.version }}-apk
+          path: ${{ steps.apk.outputs.apk_path }}
+
+      - name: Release me APK attach (sirf Release publish par)
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ${{ steps.apk.outputs.apk_path }}

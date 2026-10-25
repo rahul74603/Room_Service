@@ -43,3 +43,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Signing secrets — password KABHI commit nahi hoga (GitHub Secrets me hai).
+# Sirf EK exception: android/app/upload-keystore.p12 password-locked file hai —
+# bina us password (KEYSTORE_PASSWORD secret) ke ye kisi ke kaam ki nahi,
+# isliye repo me rakhi hai taaki har build ek hi key se sign ho.
+**/key.properties
+*.jks
+*.keystore
+*.p12
+!android/app/upload-keystore.p12

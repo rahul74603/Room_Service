@@ -1,64 +1,60 @@
 # RoomService Pro 🏨
 
-Chhote hotel / lodge ke liye **Room-wise hisaab (khata) app** — Flutter me bana hai.
-Bolkar (voice) ya type karke har room ka kharcha/jama likho, bill WhatsApp/PDF par bhejo, aur guest ke jaane par checkout history safe rakho.
+**Room boys ke liye hisaab (khata) app** — खास taur par unke liye jo kai Sir/guest ka roz ka kharcha-paisa sambhalte hain (jaise BSF Academy Tekanpur me Assistant Commandant trainees ke room boys). Har **Sir** ka alag khata: kab kya lane ko bola, kab paise mile, kitna udhaar (lena) bacha — sab voice se, bina likhe.
+
+## 📲 App Download / Update (PC ki zaroorat nahi!)
+
+**Har naye version ka APK: https://github.com/rahul74603/Room_Service/releases**
+
+1. Phone me link kholo → sabse upar wala (latest) version → `RoomServicePro-vX.Y.Z.apk` download karo.
+2. Install dabao (pehli baar Android "unknown apps install" allow mangega — allow kar do).
+3. Update bhi aise hi — purane ke upar lag jayega, **purana hisaab-data bilkul safe** rahega (har release ek hi permanent key se sign hoti hai).
+4. Phone par konsa version hai, ye Home screen ke upar **"Version X.Y.Z"** me dikhega. Version history: [CHANGELOG.md](CHANGELOG.md)
 
 ## ✨ Features
 
-- **Room Cards (Home):** Har room card par guest ka naam, photo aur **Lena (balance due)** turant dikhta hai. Upar summary: *Total Lena (sab rooms)* + *Aaj ka kharcha/jama*.
+- **Sir Cards (Home):** Ek card = ek Sir. Card par **Sir ka naam, Room No., Chest No., photo, Lena (balance due), Dhulai ON hai ya nahi** — sab ek nazar me. Upar summary: *Total Lena (Sab Sir)* + *Aaj ka kharcha/jama*. Ek room ke dono Sir saath-saath dikhte hain.
+- **Pehchan kabhi nahi tootti:** Sir ka Room ya Chest number badal jaye to bas Settings (⚙️) me badal do — purana hisaab waisa ka waisa jura rahega. Sir naye aaye to "Sir Add Karo", gaye to Checkout (hisaab History me safe).
 - **🎙️ Voice Entry (Hindi/Hinglish):** Mic dabakar bolo —
-  - `"Room 2 chai 20"` → Room 2 me Chai ₹20
-  - `"Room 1 do chai bees rupay"` → Chai x2, ₹20
+  - `"Room 210 chest 5 chai 20"` → us Sir ke khate me Chai ₹20
+  - `"Chest 3 do doodh 60 rupay"` → Doodh x2, ₹60
   - `"Room 2 ek hajar paanch sau advance"` → ₹1500 Jama (auto green)
   - `"रूम २ चाय २० रुपये"` → Devanagari Hindi bhi chalta hai
-  - Room number na samjhe to baat **Note** bankar save ho jati hai (kuch waste nahi hota).
-- **Kharcha / Jama System:** Kharcha (🔴 red) aur Payment/Advance (🟢 green), har room ka live balance: *Total Bill − Paid = Lena*.
-- **Quick Menu:** Chai/Pani jaise items ki list (khud add/edit karo) — room kholkar one-tap entry, quantity ke saath.
-- **Bill bhejo:** WhatsApp par pura bill, ya **PDF statement** (Hindi font ke saath, print/share). Speaker 🔊 se hisaab **sun** bhi sakte ho (Hindi TTS).
-- **Washing:** Room-wise washing ON/OFF switch + start date + washing bill entry.
-- **🧾 Checkout History:** Checkout par hisaab delete nahi hota — History me archive ho jata hai, kabhi bhi dobara dekh sakte ho.
-- **📝 Notes:** Rough kaam ki list (voice ya type karke), done par ✅.
-- **📊 Full Report:** Pura hisaab ek CSV (Excel) file me share karo.
-- **🌙 Dark Mode** + Room par guest/photo lagao (gallery ya camera).
+  - Sirf Room No. bolne par room ke 2 Sir me se chunne ko milega. Pehchan na samjhe to baat **Note** bankar save ho jati hai.
+- **Kharcha / Jama:** Kharcha 🔴, Payment/Advance 🟢 — har Sir ka live balance: *Total Bill − Paid = Lena (udhaar)*.
+- **🧺 Dhulai (Washing) ₹2000/mahina:** Har Sir ke liye optional ON/OFF. ON karte hi date se din counting shuru ("Day 14 • Bill due 12 Nov"), galat date ho to **DATE EDIT** se pichhli date set karo, **BILL ADD** par mahine ka charge jud jata hai aur agla cycle khud shuru.
+- **Bill bhejo/sunao:** WhatsApp par pura bill, **PDF statement** (Hindi font ke saath), ya 🔊 speaker se hisaab suno (Hindi).
+- **Quick Menu:** Chai/Pani/Doodh jaise roz ke items one-tap entry ke liye (khud add/edit).
+- **🧾 Checkout History:** Sir ke jaane par hisaab delete nahi hota — archive ho jata hai.
+- **📝 Notes** (kaam ki list), **📊 CSV Report** (Excel), **🌙 Dark Mode**, entry **search/edit**.
 
-## 🛠️ Tech
+## 🛠️ Tech & Kaam Ka Tarika
 
-Flutter (Dart) • SQLite (`sqflite`, versioned migrations — data update par safe) • `speech_to_text` • `flutter_tts` • `pdf`/`printing` • `share_plus` • `image_picker` • `permission_handler`
+Flutter (Dart) • SQLite (v3, versioned migrations — update par data safe) • `speech_to_text` • `flutter_tts` • `pdf`/`printing` • GitHub Actions (har release par cloud me APK build + sign)
+
+**PC-free flow:** Naya feature/fix is repo me Arena se hota hai → PR merge → GitHub Release (tag) → Actions APK banakar Release me lagata hai → phone se direct download. Signing key `android/app/upload-keystore.p12` (password-locked) repo me hai; password sirf GitHub Secret `KEYSTORE_PASSWORD` me rehta hai (repo owner ke paas backup).
 
 ## 📁 Structure
 
 ```
 lib/
-  main.dart                    → App entry + themes (dark mode pehle load)
-  data/database_helper.dart    → SQLite (v2): rooms, transactions, notes, menu, checkouts
-  utils/voice_parser.dart      → Hindi/Hinglish voice command parser
+  main.dart                    → App entry + themes
+  app_version.dart             → Version number (pubspec ke saath badalta hai)
+  data/database_helper.dart    → SQLite (v3): sirs, transactions, notes, menu, checkouts
+  utils/voice_parser.dart      → Hindi/Hinglish voice parser (Room/Chest/Qty/Amount)
   utils/helpers.dart           → ₹ formatting, phone normalize, CSV safety
   screens/
-    home_screen.dart           → Room cards + summary + notes + voice
-    chest_detail_screen.dart   → Room ka hisaab, bill, washing, checkout
+    home_screen.dart           → Sir cards + summary + notes + voice
+    chest_detail_screen.dart   → Sir ka hisaab, dhulai, bill, checkout
     menu_screen.dart           → Quick items add/edit
     history_screen.dart        → Checkout history archive
-test/
-  voice_parser_test.dart       → Voice parser ke 20+ real cases
-  widget_test.dart             → Helpers tests + UI smoke test
-```
-
-## 🚀 Run Karna Hai
-
-```bash
-flutter pub get
-flutter run
-```
-
-Tests:
-```bash
-flutter test
+.github/workflows/             → APK build & release automation
+test/                          → Voice parser (19 cases) + helpers tests
 ```
 
 ## ⚠️ Play Store se pehle (yaad rahe)
 
-1. `applicationId` abhi `com.example.chest_buddy` hai — store par daalne se pehle apna unique id rakho (e.g. `com.rahul.Room Service`). Note: id badalne se purani installed app update nahi hogi, isliye ye step store launch se pehle hi karna.
-2. Release build abhi debug key se sign hoti hai (`android/app/build.gradle.kts`) — store ke liye apni release keystore lagani hogi.
+`applicationId` abhi `com.example.chest_buddy` hai — store launch ke time hi badalna (badalte hi purani app update hona band ho jayegi, isliye abhi nahi badla).
 
 ---
 Made with ❤️ in Indore, India
