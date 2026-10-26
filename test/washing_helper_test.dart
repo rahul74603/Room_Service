@@ -6,7 +6,7 @@ List<WashingMonth> run({
   required DateTime today,
   Map<String, int> billed = const {},
 }) =>
-    WashingHelper.computeMonths(
+    WashingHelper.buildMonths(
       serviceStart: start,
       today: today,
       dailyRate: 70,
@@ -21,7 +21,7 @@ void main() {
           run(start: DateTime(2026, 10, 10), today: DateTime(2026, 10, 25));
       expect(months, hasLength(1));
       final oct = months.single;
-      expect(oct.days, 16); // 10..25 dono samait
+      expect(oct.serviceDays, 16); // 10..25 dono samait
       expect(oct.dueAmount, 1120);
       expect(oct.isCurrent, isTrue);
       expect(oct.isPending, isFalse);
@@ -41,17 +41,17 @@ void main() {
       expect([aug.isDone, aug.remaining], [true, 0]);
       expect([sep.isPending, sep.dueAmount, sep.remaining],
           [true, 2000, 2000]);
-      expect([oct.isCurrent, oct.days, oct.dueAmount], [true, 25, 1750]);
+      expect([oct.isCurrent, oct.serviceDays, oct.dueAmount], [true, 25, 1750]);
       expect(WashingHelper.pastPendingTotal(months), 2000);
     });
 
     test('pura mahina hamesha ₹2000 (February 28 din bhi)', () {
       final months =
           run(start: DateTime(2026, 1, 15), today: DateTime(2026, 3, 10));
-      expect([months[0].days, months[0].dueAmount], [17, 1190]);
+      expect([months[0].serviceDays, months[0].dueAmount], [17, 1190]);
       expect(months[1].isFullMonth, isTrue);
       expect(months[1].dueAmount, 2000);
-      expect([months[2].days, months[2].dueAmount], [10, 700]);
+      expect([months[2].serviceDays, months[2].dueAmount], [10, 700]);
     });
 
     test('chalte mahine me aadha bill: baki remaining', () {
@@ -74,9 +74,9 @@ void main() {
       final months =
           run(start: DateTime(2025, 12, 31), today: DateTime(2026, 1, 2));
       expect(months.map((m) => m.key).toList(), ['2025-12', '2026-01']);
-      expect([months[0].days, months[0].dueAmount, months[0].isPending],
+      expect([months[0].serviceDays, months[0].dueAmount, months[0].isPending],
           [1, 70, true]);
-      expect([months[1].days, months[1].dueAmount], [2, 140]);
+      expect([months[1].serviceDays, months[1].dueAmount], [2, 140]);
     });
   });
 

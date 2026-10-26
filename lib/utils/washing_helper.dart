@@ -16,6 +16,7 @@ class WashingMonth {
   final int billedAmount; // is mahine ka bill me jud chuka hai
   final bool isCurrent; // chal raha mahina
   final bool isPast; // beet gaya mahina
+  final bool isFullMonth; // poora calendar mahina cover (seedha monthly rakam)
 
   const WashingMonth({
     required this.year,
@@ -25,6 +26,7 @@ class WashingMonth {
     required this.billedAmount,
     required this.isCurrent,
     required this.isPast,
+    this.isFullMonth = false,
   });
 
   /// 'yyyy-MM' — DB me mahine ki pehchan
@@ -120,6 +122,7 @@ class WashingHelper {
           billedAmount: billedByMonth[key] ?? 0,
           isCurrent: cursor.year == now.year && cursor.month == now.month,
           isPast: cursor.isBefore(lastMonth),
+          isFullMonth: fullMonth,
         ));
       }
       cursor = DateTime(cursor.year, cursor.month + 1, 1);

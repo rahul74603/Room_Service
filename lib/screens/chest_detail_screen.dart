@@ -158,7 +158,7 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
       _washingStart = _parseWashingDate(_washingStartDate);
       _settings = appSettings;
       _washingMonths = _isWashingOn && _washingStart != null
-          ? WashingHelper.computeMonths(
+          ? WashingHelper.buildMonths(
               serviceStart: _washingStart!,
               today: DateTime.now(),
               dailyRate: _settings.washingDailyRate,
@@ -555,19 +555,19 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Dhulai Bill — ${m.label}'),
+        title: Text('Dhulai Bill — ${m.fullLabel}'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               m.isFullMonth
-                  ? '${m.label}: pura mahina = ${AppHelpers.formatRupees(m.dueAmount)}'
-                  : '${m.label}: ${m.days} din × ${AppHelpers.formatRupees(_settings.washingDailyRate)} = ${AppHelpers.formatRupees(m.dueAmount)}',
+                  ? '${m.fullLabel}: pura mahina = ${AppHelpers.formatRupees(m.dueAmount)}'
+                  : '${m.fullLabel}: ${m.serviceDays} din × ${AppHelpers.formatRupees(_settings.washingDailyRate)} = ${AppHelpers.formatRupees(m.dueAmount)}',
             ),
-            if (m.billed > 0) ...[
+            if (m.billedAmount > 0) ...[
               const SizedBox(height: 4),
               Text(
-                'Pehle se bill bana: ${AppHelpers.formatRupees(m.billed)} • Baki: ${AppHelpers.formatRupees(m.remaining)}',
+                'Pehle se bill bana: ${AppHelpers.formatRupees(m.billedAmount)} • Baki: ${AppHelpers.formatRupees(m.remaining)}',
                 style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ],
@@ -600,13 +600,13 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
               await DatabaseHelper.instance.addWashingBillTransaction(
                 _chestNo,
                 monthKey: m.key,
-                title: 'Dhulai — ${m.label}',
+                title: 'Dhulai — ${m.fullLabel}',
                 amount: amt,
               );
               if (!ctx.mounted) return;
               Navigator.pop(ctx);
               _refreshData();
-              _showMsg('${m.label} ka dhulai bill jud gaya ✅');
+              _showMsg('${m.fullLabel} ka dhulai bill jud gaya ✅');
             },
             child: const Text('BILL ADD KARO'),
           ),
@@ -980,8 +980,8 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
         subColor = Colors.red;
       } else if (current != null) {
         sub = current.isDone
-            ? '${current.label}: ✓ Done — bill ban gaya'
-            : '${current.label} chalu hai: ${current.days} din × ${AppHelpers.formatRupees(_settings.washingDailyRate)} = ${AppHelpers.formatRupees(current.dueAmount)}';
+            ? '${current.fullLabel}: ✓ Done — bill ban gaya'
+            : '${current.fullLabel} chalu hai: ${current.serviceDays} din × ${AppHelpers.formatRupees(_settings.washingDailyRate)} = ${AppHelpers.formatRupees(current.dueAmount)}';
         subColor = current.isDone ? Colors.green : Colors.blue;
       } else {
         sub = 'Start ${_fmtDay(_washingStart!)}';
@@ -1044,20 +1044,20 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
       statusLine = m.remaining > 0
           ? '• Chalu hai'
           : '✓ Done';
-      detailLine = m.billed > 0
-          ? '${AppHelpers.formatRupees(m.dueAmount)} (bill ${AppHelpers.formatRupees(m.billed)})'
-          : '${m.days} din • ${AppHelpers.formatRupees(m.dueAmount)}';
+      detailLine = m.billedAmount > 0
+          ? '${AppHelpers.formatRupees(m.dueAmount)} (bill ${AppHelpers.formatRupees(m.billedAmount)})'
+          : '${m.serviceDays} din • ${AppHelpers.formatRupees(m.dueAmount)}';
     } else {
       bg = Colors.red.shade700;
-      statusLine = m.billed > 0 ? '⏳ Aadha bill' : '⏳ Pending';
-      detailLine = m.billed > 0
+      statusLine = m.billedAmount > 0 ? '⏳ Aadha bill' : '⏳ Pending';
+      detailLine = m.billedAmount > 0
           ? 'Baki ${AppHelpers.formatRupees(m.remaining)}'
           : AppHelpers.formatRupees(m.dueAmount);
     }
     return InkWell(
       onTap: () {
         if (m.isDone) {
-          _showMsg('${m.label} ka bill ban chuka hai ✓');
+          _showMsg('${m.fullLabel} ka bill ban chuka hai ✓');
         } else {
           _showMonthBillDialog(m);
         }

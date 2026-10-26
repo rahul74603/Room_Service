@@ -210,7 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
             WashingHelper.parseServiceDate(chest['washing_start_date']);
         if (start == null) continue;
         final sirId = (chest['number'] as num?)?.toInt() ?? 0;
-        final months = WashingHelper.computeMonths(
+        final months = WashingHelper.buildMonths(
           serviceStart: start,
           today: today,
           dailyRate: appSettings.washingDailyRate,
