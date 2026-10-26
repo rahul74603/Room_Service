@@ -10,12 +10,14 @@ import 'package:speech_to_text/speech_to_text.dart';
 
 import '../app_version.dart';
 import '../data/database_helper.dart';
-import '../main.dart';
+import '../data/settings_service.dart';
 import '../utils/helpers.dart';
 import '../utils/voice_parser.dart';
+import '../utils/washing_helper.dart';
 import 'chest_detail_screen.dart';
 import 'history_screen.dart';
 import 'menu_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -33,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _chests = [];
   List<Map<String, dynamic>> _notes = [];
   Map<int, int> _roomDues = {}; // room number -> lena (expense - paid)
+  Map<int, int> _washingPending = {}; // Sir id -> beete mahino ki pending dhulai
   Map<String, int> _totals = const {
     'totalDue': 0,
     'todayExpense': 0,
@@ -168,6 +171,9 @@ class _HomeScreenState extends State<HomeScreen> {
       final notes = await DatabaseHelper.instance.getPendingNotes();
       final balanceRows = await DatabaseHelper.instance.getRoomBalances();
       final totals = await DatabaseHelper.instance.getDashboardTotals();
+      final allWashingBilled =
+          await DatabaseHelper.instance.getAllWashingBilled();
+      final appSettings = await SettingsService.load();
       if (!mounted) return;
       final dues = <int, int>{};
       for (final row in balanceRows) {
@@ -195,10 +201,30 @@ class _HomeScreenState extends State<HomeScreen> {
         return ((a['number'] as num?)?.toInt() ?? 0)
             .compareTo((b['number'] as num?)?.toInt() ?? 0);
       });
+      // Dhulai pending (beete hue mahino ka unbilled) har Sir ke liye
+      final washingPending = <int, int>{};
+      final today = DateTime.now();
+      for (final chest in chests) {
+        if (((chest['is_washing_on'] as num?)?.toInt() ?? 0) != 1) continue;
+        final start =
+            WashingHelper.parseServiceDate(chest['washing_start_date']);
+        if (start == null) continue;
+        final sirId = (chest['number'] as num?)?.toInt() ?? 0;
+        final months = WashingHelper.computeMonths(
+          serviceStart: start,
+          today: today,
+          dailyRate: appSettings.washingDailyRate,
+          monthlyAmount: appSettings.washingMonthlyAmount,
+          billedByMonth: allWashingBilled[sirId] ?? const {},
+        );
+        final pending = WashingHelper.pastPendingTotal(months);
+        if (pending > 0) washingPending[sirId] = pending;
+      }
       setState(() {
         _chests = sortedChests;
         _notes = notes;
         _roomDues = dues;
+        _washingPending = washingPending;
         _totals = totals;
         _loadError = null;
         _isLoading = false;
@@ -885,10 +911,17 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Export Report (CSV)',
           ),
           IconButton(
-            onPressed: () => MyApp.toggleTheme(context),
-            icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode,
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => const SettingsScreen()),
+              );
+              _refreshAll();
+            },
+            icon: Icon(Icons.settings,
                 color: isDark ? Colors.white : Colors.black),
-            tooltip: 'Theme',
+            tooltip: 'Settings',
           ),
         ],
       ),
@@ -1089,7 +1122,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final chestDisplay = (chest['chest_no']?.toString().isNotEmpty ?? false)
         ? chest['chest_no'].toString()
         : '$number';
-    final subline = _personSubline(chest);
+    final roomDisplay = chest['room_no']?.toString() ?? '';
+    final washingPendingAmt = _washingPending[number] ?? 0;
     final washingOn = chest['is_washing_on'] == 1;
     final String? imagePath = chest['image_path'] as String?;
     final imageFile = (imagePath != null && imagePath.isNotEmpty)
@@ -1152,57 +1186,61 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: const Icon(Icons.person,
                             color: Colors.white, size: 20),
                       ),
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.black26,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              'Chest $chestDisplay',
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12),
-                            ),
+                      GestureDetector(
+                        onTap: () => _showEditChestDialog(chest),
+                        child: Container(
+                          padding: const EdgeInsets.all(5),
+                          decoration: const BoxDecoration(
+                            color: Colors.black26,
+                            shape: BoxShape.circle,
                           ),
-                          const SizedBox(width: 6),
-                          GestureDetector(
-                            onTap: () => _showEditChestDialog(chest),
-                            child: Container(
-                              padding: const EdgeInsets.all(5),
-                              decoration: const BoxDecoration(
-                                color: Colors.black26,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(Icons.settings,
-                                  color: Colors.white, size: 16),
-                            ),
-                          ),
-                        ],
+                          child: const Icon(Icons.settings,
+                              color: Colors.white, size: 16),
+                        ),
                       ),
                     ],
                   ),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Chest Number sabse bada — door se ek nazar me pehchan
+                      const Text(
+                        'CHEST NO.',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          chestDisplay,
+                          maxLines: 1,
+                          style: GoogleFonts.poppins(
+                            fontSize: 40,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            height: 1.0,
+                          ),
+                        ),
+                      ),
                       Text(
                         sirName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.poppins(
-                          fontSize: 20,
+                          fontSize: 15,
                           color: Colors.white,
-                          fontWeight: FontWeight.bold,
+                          fontWeight: FontWeight.w600,
                           height: 1.1,
                         ),
                       ),
-                      if (subline.isNotEmpty)
+                      if (roomDisplay.isNotEmpty)
                         Text(
-                          subline,
+                          '🚪 Room $roomDisplay',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.poppins(
@@ -1213,21 +1251,46 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       if (washingOn) ...[
                         const SizedBox(height: 4),
-                        const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.local_laundry_service,
-                                color: Colors.white, size: 13),
-                            SizedBox(width: 4),
-                            Text(
-                              'Dhulai ON',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600),
+                        if (washingPendingAmt > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade700,
+                              borderRadius: BorderRadius.circular(10),
                             ),
-                          ],
-                        ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.local_laundry_service,
+                                    color: Colors.white, size: 12),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Dhulai Pending ${AppHelpers.formatRupees(washingPendingAmt)}',
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          )
+                        else
+                          const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.local_laundry_service,
+                                  color: Colors.white, size: 13),
+                              SizedBox(width: 4),
+                              Text(
+                                'Dhulai ON',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
                       ],
                       if (due != 0) ...[
                         const SizedBox(height: 6),

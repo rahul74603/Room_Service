@@ -3,6 +3,12 @@
 Har version ka APK yahan milega: https://github.com/rahul74603/Room_Service/releases
 Phone par lage hue app ka version Home screen ke upar "Version X.Y.Z" me dikhta hai.
 
+## v1.2.0 (build 5) — kalendar dhulai, bada Chest No., Settings
+- **Dhulai kalendar ke hisaab se**: har din **₹70** judta hai; pura mahina = **₹2000**. Sir ke page par mahine alag-alag dikhte hain — bill ban gaya to **✓ Done (hara)**, mahina beet gaya aur bill nahi bana to **⏳ Pending (laal)**, chalta mahina **neela** din-ginti samait. Kisi mahine par tap karke us mahine ka bill banta hai; BILL ADD sabse purana pending pehle leta hai. Home card par bhi laal **"Dhulai Pending ₹X"** chip dikhta hai.
+- **Bada Chest Number**: Home card par Chest No. ab sabse bada dikhta hai; Sir ka naam aur Room No. uske neeche chhote.
+- **Settings screen** (Home ke upar ⚙️): bill par dikhne wala **hotel/mess ka naam** (PDF + WhatsApp bill ke sabse upar), dhulai ke **rate (₹/din aur ₹/mahina)** aur **Dark Mode** — sab yahi se badlo.
+- Database v4: purane "Dhulai" bills unke mahino se apne aap jude gaye (data bilkul safe).
+
 ## v1.1.2 (build 4) — asli loading fix (read-only list sort)
 - Asli wajah pakdi gayi: database (sqflite) se mili Sir ki list **read-only** hoti hai; app use Room ke hisaab se **seedha sort** kar rahi thi, isliye "Unsupported operation: read-only" error se home atak gayi thi.
 - Fix: DatabaseHelper ab har query ka result **badli ja sakne wali copy** karke deta hai, aur home bhi copy par sort karti hai — ye error ab kahin nahi aayega.
