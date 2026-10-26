@@ -19,7 +19,9 @@ class DatabaseHelper {
   // v3: Sir ka model — chest_no (display) aur room_no alag fields, washing_amount.
   //     `number` ab andar ka stable ID hai (transactions usi se jude rahte hain),
   //     taaki Sir ka room/chest badalne par bhi purana hisaab na toote.
-  static const int _dbVersion = 3;
+  // v4: washing_bills — dhulai ka mahine-daar record (kab, kitne ka bill bana),
+  //     taaki October type mahino par ✓ Done / Pending dikh sake.
+  static const int _dbVersion = 4;
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -125,6 +127,17 @@ class DatabaseHelper {
         checkout_date TEXT NOT NULL
       )
     ''');
+    // Dhulai ke mahine-daar bills (ek mahine ke kai bill bhi ho sakte hain)
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS washing_bills (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chest_no INTEGER NOT NULL,
+        month_key TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        transaction_id INTEGER,
+        created_date TEXT NOT NULL
+      )
+    ''');
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_transactions_chest ON transactions(chest_no, date)',
     );
@@ -148,6 +161,39 @@ class DatabaseHelper {
           "UPDATE chests SET room_no = '' WHERE room_no IS NULL");
       await db.execute(
           'UPDATE chests SET washing_amount = 2000 WHERE washing_amount IS NULL');
+    }
+    if (oldVersion < 4) {
+      await _createTables(db); // washing_bills table banegi (baki IF NOT EXISTS)
+      // Purane 'Dhulai...' wale bills ko unke mahine se jodo, taaki un
+      // mahino par galat Pending na dikhe. Title me date ho to wahi mahina,
+      // warna entry ki apni date ka mahina.
+      final oldBills = await db.query('transactions',
+          where: "title LIKE 'Dhulai%' AND is_advance = 0");
+      const monthNum = {
+        'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+        'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
+      };
+      final dateInTitle = RegExp(
+          r'(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})');
+      for (final t in oldBills) {
+        String? key;
+        final m = dateInTitle.firstMatch(t['title']?.toString() ?? '');
+        if (m != null) {
+          key =
+              '${m.group(3)}-${monthNum[m.group(2)]!.toString().padLeft(2, '0')}';
+        } else {
+          final d = t['date']?.toString() ?? '';
+          if (d.length >= 7) key = d.substring(0, 7);
+        }
+        if (key == null) continue;
+        await db.insert('washing_bills', {
+          'chest_no': t['chest_no'],
+          'month_key': key,
+          'amount': t['amount'],
+          'transaction_id': t['id'],
+          'created_date': t['date'],
+        });
+      }
     }
   }
 
@@ -454,6 +500,65 @@ class DatabaseHelper {
     if (amount != null) values['washing_amount'] = amount;
     await db.update('chests', values,
         where: 'number = ?', whereArgs: [number]);
+  }
+
+  /// Ek Sir ke dhulai bills: month_key ('yyyy-MM') -> kul billed amount.
+  Future<Map<String, int>> getWashingBilledByMonth(int chestNo) async {
+    final db = await instance.database;
+    final rows = await db.rawQuery(
+      'SELECT month_key, COALESCE(SUM(amount), 0) AS total FROM washing_bills '
+      'WHERE chest_no = ? GROUP BY month_key',
+      [chestNo],
+    );
+    return {
+      for (final r in rows)
+        (r['month_key']?.toString() ?? ''): _toInt(r['total']),
+    };
+  }
+
+  /// Saare Sir ke dhulai bills ek saath (Home par pending dikhane ke liye).
+  /// Return: { sirId: { month_key: billedAmount } }
+  Future<Map<int, Map<String, int>>> getAllWashingBilled() async {
+    final db = await instance.database;
+    final rows = await db.rawQuery(
+      'SELECT chest_no, month_key, COALESCE(SUM(amount), 0) AS total '
+      'FROM washing_bills GROUP BY chest_no, month_key',
+    );
+    final result = <int, Map<String, int>>{};
+    for (final r in rows) {
+      final sirId = _toInt(r['chest_no']);
+      result.putIfAbsent(sirId, () => {})[
+          r['month_key']?.toString() ?? ''] = _toInt(r['total']);
+    }
+    return result;
+  }
+
+  /// Dhulai ka bill: hisaab (transaction) + mahine ka record, dono ek saath
+  /// (beech me app band ho jaye to bhi aadha kaam nahi hoga).
+  Future<void> addWashingBillTransaction(
+    int chestNo, {
+    required String monthKey,
+    required String title,
+    required int amount,
+  }) async {
+    final db = await instance.database;
+    await db.transaction((txn) async {
+      final nowIso = DateTime.now().toIso8601String();
+      final txnId = await txn.insert('transactions', {
+        'chest_no': chestNo,
+        'title': title,
+        'amount': amount,
+        'date': nowIso,
+        'is_advance': 0,
+      });
+      await txn.insert('washing_bills', {
+        'chest_no': chestNo,
+        'month_key': monthKey,
+        'amount': amount,
+        'transaction_id': txnId,
+        'created_date': nowIso,
+      });
+    });
   }
 
   Future<void> updateChestImage(int number, String? path) async {
