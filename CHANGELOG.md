@@ -3,6 +3,11 @@
 Har version ka APK yahan milega: https://github.com/rahul74603/Room_Service/releases
 Phone par lage hue app ka version Home screen ke upar "Version X.Y.Z" me dikhta hai.
 
+## v1.3.0 (build 6) — bolkar hisaab, dhulai popup, behtar Add/Pay
+- **🔊 hisaab sunao (speaker) ab pura details bolta hai**: pehle ek-ek item (naam + rakam + tareekh), phir kul kharcha, phir jama (diye hue paise) alag se ek-ek karke, phir kul jama, aur aakhir me final baki. Beech me speaker button dabane se ruk jata hai.
+- **🧺 Dhulai ka saaf naya look**: Sir ke page par ab sirf is mahine ka progress bar dikhta hai; **"MAHINE"** button dabane par badi saaf popup window khulti hai — har mahina bada card: **DONE ✓ (hara)**, **PENDING (laal)**, **chalu hai (neela)**. Mahine par tap = us mahine ka bill.
+- **➕ Add/Pay pehle se tez aur asan**: haal ke items ke one-tap chips, ₹ wale quick amount chips, JAMA me **"PURA ₹X"** (poora baki ek tap me), Qty ke **+/−** button, entry ki **date badalna** (kal bhool gaye to purani date ki entry), aur save se pehle hi **live balance preview**. Save ke baad message me naya balance bhi dikhta hai.
+
 ## v1.2.0 (build 5) — kalendar dhulai, bada Chest No., Settings
 - **Dhulai kalendar ke hisaab se**: har din **₹70** judta hai; pura mahina = **₹2000**. Sir ke page par mahine alag-alag dikhte hain — bill ban gaya to **✓ Done (hara)**, mahina beet gaya aur bill nahi bana to **⏳ Pending (laal)**, chalta mahina **neela** din-ginti samait. Kisi mahine par tap karke us mahine ka bill banta hai; BILL ADD sabse purana pending pehle leta hai. Home card par bhi laal **"Dhulai Pending ₹X"** chip dikhta hai.
 - **Bada Chest Number**: Home card par Chest No. ab sabse bada dikhta hai; Sir ka naam aur Room No. uske neeche chhote.
