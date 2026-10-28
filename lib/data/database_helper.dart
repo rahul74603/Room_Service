@@ -218,13 +218,14 @@ class DatabaseHelper {
 
   // --- Transactions Logic ---
   Future<int> addTransaction(
-      int chestNo, String title, int amount, bool isAdvance) async {
+      int chestNo, String title, int amount, bool isAdvance,
+      {DateTime? date}) async {
     final db = await instance.database;
     return await db.insert('transactions', {
       'chest_no': chestNo,
       'title': title,
       'amount': amount,
-      'date': DateTime.now().toIso8601String(),
+      'date': (date ?? DateTime.now()).toIso8601String(),
       'is_advance': isAdvance ? 1 : 0,
     });
   }

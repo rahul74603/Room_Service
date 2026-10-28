@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../data/database_helper.dart';
 import '../data/settings_service.dart';
+import '../utils/bill_speech.dart';
 import '../utils/helpers.dart';
 import '../utils/voice_parser.dart';
 import '../utils/washing_helper.dart';
@@ -28,6 +29,8 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
   bool _speechReady = false;
   final FlutterTts _flutterTts = FlutterTts();
   bool _isSpeaking = false;
+  int _speechRun = 0; // line-by-line sunane ka control (beech me rokne ke liye)
+  bool _inSpeechSeries = false;
 
   List<Map<String, dynamic>> _transactions = [];
   List<Map<String, dynamic>> _menuItems = [];
@@ -110,10 +113,15 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
       await _flutterTts.setSpeechRate(0.45);
       await _flutterTts.setPitch(1.0);
       _flutterTts.setCompletionHandler(() {
-        if (mounted) setState(() => _isSpeaking = false);
+        // Line-by-line series chal rahi ho to beech me icon mat badlo
+        if (mounted && !_inSpeechSeries) {
+          setState(() => _isSpeaking = false);
+        }
       });
       _flutterTts.setErrorHandler((msg) {
-        if (mounted) setState(() => _isSpeaking = false);
+        if (mounted && !_inSpeechSeries) {
+          setState(() => _isSpeaking = false);
+        }
       });
     } catch (_) {
       // TTS available na ho to chupchaap aage badho
@@ -275,23 +283,44 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
   }
 
   // ---------- TTS ----------
+  /// Poora hisaab bolkar sunao: pehle ek-ek item + rakam, phir kul kharcha,
+  /// phir jama rakam alag se, aakhir me final baki. Beech me speaker button
+  /// dabane se ruk jayega.
   Future<void> _speakBill() async {
     if (_isSpeaking) {
+      _speechRun++;
+      _inSpeechSeries = false;
       await _flutterTts.stop();
       if (mounted) setState(() => _isSpeaking = false);
       return;
     }
+    // Screen par nayi entry pehle dikhti hai; sunane ke liye purani pehle
+    final entries = _transactions.reversed.map((t) {
+      return SpeechEntry(
+        title: t['title']?.toString() ?? '',
+        amount: (t['amount'] as num?)?.toInt() ?? 0,
+        isPayment: t['is_advance'] == 1,
+        date: DateTime.tryParse(t['date']?.toString() ?? ''),
+      );
+    }).toList();
+    final lines =
+        buildBillSpeechLines(sirName: _roomName, entries: entries);
+    final myRun = ++_speechRun;
+    _inSpeechSeries = true;
     setState(() => _isSpeaking = true);
-    var textToSpeak = '$_roomName का हिसाब। ';
-    textToSpeak += 'कुल खर्चा $_totalExpense रुपये। जमा हुए $_totalPaid रुपये। ';
-    if (_balanceDue > 0) {
-      textToSpeak += 'लेने बचे हैं $_balanceDue रुपये।';
-    } else if (_balanceDue < 0) {
-      textToSpeak += 'गेस्ट के ${_balanceDue.abs()} रुपये ज्यादा जमा हैं।';
-    } else {
-      textToSpeak += 'हिसाब बराबर है।';
+    try {
+      await _flutterTts.awaitSpeakCompletion(true);
+      for (final line in lines) {
+        if (myRun != _speechRun) return; // user ne rok diya
+        await _flutterTts.speak(line);
+      }
+    } catch (_) {
+      // TTS me dikkat — chupchaap band karo
     }
-    await _flutterTts.speak(textToSpeak);
+    _inSpeechSeries = false;
+    if (mounted && myRun == _speechRun) {
+      setState(() => _isSpeaking = false);
+    }
   }
 
   // ---------- PDF ----------
@@ -832,126 +861,273 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
         text: initialPrice == 0 ? '' : '$initialPrice');
     final q = TextEditingController(text: '$initialQty');
     var isPayment = initialPayment;
+    DateTime? pickedDate; // null = aaj ki date
+
+    // Haal ke kharcha items (ek tap me naam bharne ke liye)
+    final recentItems = <String>[];
+    for (final t in _transactions) {
+      if (t['is_advance'] == 1) continue;
+      var title = (t['title']?.toString() ?? '').trim();
+      title = title.replaceAll(RegExp(r'\s*\(x\d+\)$'), '');
+      if (title.isEmpty || title.startsWith('Dhulai')) continue;
+      if (!recentItems.contains(title)) recentItems.add(title);
+      if (recentItems.length >= 6) break;
+    }
+
+    Widget segButton(StateSetter setD, String label, bool payment) {
+      final active = isPayment == payment;
+      final color = payment ? Colors.green : Colors.red;
+      return Expanded(
+        child: InkWell(
+          onTap: () => setD(() => isPayment = payment),
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: active ? color : Colors.transparent,
+              border: Border.all(color: color, width: 1.5),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Center(
+              child: Text(label,
+                  style: TextStyle(
+                      color: active ? Colors.white : color,
+                      fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ),
+      );
+    }
 
     await showDialog(
       context: context,
       barrierDismissible: false,
       builder: (dialogCtx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text(
-            isPayment ? 'JAMA (Credit)' : 'KHARCHA (Debit)',
-            style: TextStyle(
-                color: isPayment ? Colors.green : Colors.red,
-                fontWeight: FontWeight.bold),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
+        builder: (ctx, setDialogState) {
+          // Live preview ke liye typing par refresh
+          final priceNow = int.tryParse(p.text.trim()) ?? 0;
+          final qtyNow = int.tryParse(q.text.trim()) ?? 1;
+          final totalNow = isPayment ? priceNow : priceNow * qtyNow;
+          final newBalanceNow =
+              _balanceDue + (isPayment ? -totalNow : totalNow);
+          final quickAmounts = isPayment
+              ? const [100, 200, 500, 1000, 2000]
+              : const [10, 20, 50, 100, 200];
+          return AlertDialog(
+            title: Text(
+              isPayment ? '💰 JAMA (Paise mile)' : '🧾 KHARCHA (Item add)',
+              style: TextStyle(
+                  color: isPayment ? Colors.green : Colors.red,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18),
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: () => setDialogState(() => isPayment = false),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        color: !isPayment ? Colors.red : Colors.grey[200],
-                        child: Center(
-                            child: Text('Kharcha (Red)',
-                                style: TextStyle(
-                                    color: !isPayment
-                                        ? Colors.white
-                                        : Colors.black))),
-                      ),
-                    ),
+                  Row(
+                    children: [
+                      segButton(setDialogState, 'KHARCHA', false),
+                      const SizedBox(width: 10),
+                      segButton(setDialogState, 'JAMA', true),
+                    ],
                   ),
-                  Expanded(
-                    child: InkWell(
-                      onTap: () => setDialogState(() => isPayment = true),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        color: isPayment ? Colors.green : Colors.grey[200],
-                        child: Center(
-                            child: Text('Jama (Green)',
-                                style: TextStyle(
-                                    color: isPayment
-                                        ? Colors.white
-                                        : Colors.black))),
-                      ),
+                  const SizedBox(height: 14),
+                  if (!isPayment && recentItems.isNotEmpty) ...[
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        for (final r in recentItems)
+                          ActionChip(
+                            label: Text(r,
+                                style: const TextStyle(fontSize: 12)),
+                            onPressed: () {
+                              i.text = r;
+                              setDialogState(() {});
+                            },
+                          ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 15),
-              TextField(
-                controller: i,
-                decoration: InputDecoration(
-                    labelText:
-                        isPayment ? 'Note (e.g. Advance)' : 'Item Name',
-                    border: const OutlineInputBorder()),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: p,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                          labelText: 'Amount', border: OutlineInputBorder()),
-                    ),
-                  ),
-                  if (!isPayment) ...[
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(
-                        controller: q,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                            labelText: 'Qty', border: OutlineInputBorder()),
-                      ),
-                    ),
+                    const SizedBox(height: 10),
                   ],
+                  TextField(
+                    controller: i,
+                    decoration: InputDecoration(
+                        labelText:
+                            isPayment ? 'Note (e.g. Advance, UPI)' : 'Item Name',
+                        border: const OutlineInputBorder()),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: TextField(
+                          controller: p,
+                          autofocus: initialItem.isEmpty,
+                          keyboardType: TextInputType.number,
+                          onChanged: (_) => setDialogState(() {}),
+                          decoration: InputDecoration(
+                              labelText:
+                                  isPayment ? 'Amount (₹)' : 'Rate (₹)',
+                              border: const OutlineInputBorder()),
+                        ),
+                      ),
+                      if (!isPayment) ...[
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: () {
+                            final v = (int.tryParse(q.text.trim()) ?? 1) - 1;
+                            q.text = '${v < 1 ? 1 : v}';
+                            setDialogState(() {});
+                          },
+                          icon: const Icon(Icons.remove_circle_outline),
+                        ),
+                        SizedBox(
+                          width: 52,
+                          child: TextField(
+                            controller: q,
+                            textAlign: TextAlign.center,
+                            keyboardType: TextInputType.number,
+                            onChanged: (_) => setDialogState(() {}),
+                            decoration: const InputDecoration(
+                                labelText: 'Qty',
+                                border: OutlineInputBorder()),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            q.text =
+                                '${(int.tryParse(q.text.trim()) ?? 1) + 1}';
+                            setDialogState(() {});
+                          },
+                          icon: const Icon(Icons.add_circle_outline),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: [
+                      for (final a in quickAmounts)
+                        ActionChip(
+                          label: Text('₹$a',
+                              style: const TextStyle(fontSize: 12)),
+                          onPressed: () {
+                            p.text = '$a';
+                            setDialogState(() {});
+                          },
+                        ),
+                      if (isPayment && _balanceDue > 0)
+                        ActionChip(
+                          backgroundColor: Colors.green.shade100,
+                          label: Text(
+                              'PURA ${AppHelpers.formatRupees(_balanceDue)}',
+                              style: const TextStyle(
+                                  fontSize: 12, fontWeight: FontWeight.bold)),
+                          onPressed: () {
+                            p.text = '$_balanceDue';
+                            setDialogState(() {});
+                          },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: ActionChip(
+                      avatar: const Icon(Icons.calendar_month, size: 16),
+                      label: Text(
+                          pickedDate == null
+                              ? 'Date: Aaj'
+                              : 'Date: ${_fmtDay(pickedDate!)}',
+                          style: const TextStyle(fontSize: 12)),
+                      onPressed: () async {
+                        final now = DateTime.now();
+                        final picked = await showDatePicker(
+                          context: ctx,
+                          initialDate: pickedDate ?? now,
+                          firstDate: DateTime(2020),
+                          lastDate: now,
+                          helpText: 'Entry kis date ki hai?',
+                        );
+                        if (picked != null) {
+                          setDialogState(() => pickedDate = picked);
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      totalNow <= 0
+                          ? 'Abhi balance: ${_balanceText(_balanceDue)}'
+                          : '${isPayment ? 'Jama' : 'Kharcha'} ${AppHelpers.formatRupees(totalNow)}  →  Iske baad: ${_balanceText(newBalanceNow)}',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 13),
+                    ),
+                  ),
                 ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogCtx),
+                  child: const Text('Cancel')),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isPayment ? Colors.green : Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () async {
+                  final price = int.tryParse(p.text.trim()) ?? 0;
+                  final qty = int.tryParse(q.text.trim()) ?? 1;
+                  if (price <= 0) {
+                    _showMsg('Sahi amount daalo (0 se bada)', isError: true);
+                    return;
+                  }
+                  if (qty <= 0) {
+                    _showMsg('Quantity kam se kam 1 rakho', isError: true);
+                    return;
+                  }
+                  final total = isPayment ? price : price * qty;
+                  var title = i.text.trim();
+                  if (title.isEmpty) {
+                    title = isPayment ? 'Payment/Advance' : 'General Item';
+                  } else if (!isPayment && qty > 1) {
+                    title = '$title (x$qty)';
+                  }
+                  DateTime? saveDate;
+                  if (pickedDate != null) {
+                    final nowT = DateTime.now();
+                    saveDate = DateTime(pickedDate!.year,
+                        pickedDate!.month, pickedDate!.day, nowT.hour,
+                        nowT.minute, nowT.second);
+                  }
+                  await DatabaseHelper.instance.addTransaction(
+                      _chestNo, title, total, isPayment,
+                      date: saveDate);
+                  if (!dialogCtx.mounted) return;
+                  Navigator.pop(dialogCtx);
+                  _refreshData();
+                  _showMsg(
+                      'Save ho gaya ✅ Ab balance: ${_balanceText(_balanceDue + (isPayment ? -total : total))}');
+                },
+                child: Text(isPayment ? 'JAMA KARO' : 'ADD KARO'),
               ),
             ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(dialogCtx),
-                child: const Text('Cancel')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isPayment ? Colors.green : Colors.red,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () async {
-                final price = int.tryParse(p.text.trim()) ?? 0;
-                final qty = int.tryParse(q.text.trim()) ?? 1;
-                if (price <= 0) {
-                  _showMsg('Sahi amount daalo (0 se bada)', isError: true);
-                  return;
-                }
-                if (qty <= 0) {
-                  _showMsg('Quantity kam se kam 1 rakho', isError: true);
-                  return;
-                }
-                final total = isPayment ? price : price * qty;
-                var title = i.text.trim();
-                if (title.isEmpty) {
-                  title = isPayment ? 'Payment/Advance' : 'General Item';
-                } else if (!isPayment && qty > 1) {
-                  title = '$title (x$qty)';
-                }
-                await DatabaseHelper.instance
-                    .addTransaction(_chestNo, title, total, isPayment);
-                if (!dialogCtx.mounted) return;
-                Navigator.pop(dialogCtx);
-                _refreshData();
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
     i.dispose();
@@ -959,13 +1135,20 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
     q.dispose();
   }
 
+  /// Balance ko seedhe shabdo me: Lena / Advance / Barabar.
+  String _balanceText(int balance) {
+    if (balance > 0) return 'Lena ${AppHelpers.formatRupees(balance)}';
+    if (balance < 0) return 'Advance ${AppHelpers.formatRupees(-balance)}';
+    return 'Hisaab barabar (₹0)';
+  }
+
   Widget _washingStatusText() {
-    final title =
-        'Dhulai (Washing) — ${AppHelpers.formatRupees(_settings.washingDailyRate)}/din • ${AppHelpers.formatRupees(_settings.washingMonthlyAmount)}/mahina';
+    final rateLine =
+        '${AppHelpers.formatRupees(_settings.washingDailyRate)}/din • ${AppHelpers.formatRupees(_settings.washingMonthlyAmount)}/mahina';
     String sub;
     Color subColor = Colors.grey;
     if (!_isWashingOn) {
-      sub = 'OFF — Sir ne dhulai nahi rakhi hai';
+      sub = 'OFF — $rateLine';
     } else if (_washingStart == null || _washingMonths.isEmpty) {
       sub = 'ON — start date set karo (DATE EDIT)';
       subColor = Colors.orange;
@@ -976,13 +1159,15 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
           _washingMonths.where((m) => m.isCurrent).firstOrNull;
       if (pendingTotal > 0) {
         sub =
-            '⚠️ Pending ${AppHelpers.formatRupees(pendingTotal)} — purane mahino ka bill baki hai';
+            '⚠️ ${AppHelpers.formatRupees(pendingTotal)} pending — MAHINE dabao';
         subColor = Colors.red;
+      } else if (current != null && current.isDone) {
+        sub = '${current.fullLabel}: ✓ bill ban gaya';
+        subColor = Colors.green;
       } else if (current != null) {
-        sub = current.isDone
-            ? '${current.fullLabel}: ✓ Done — bill ban gaya'
-            : '${current.fullLabel} chalu hai: ${current.serviceDays} din × ${AppHelpers.formatRupees(_settings.washingDailyRate)} = ${AppHelpers.formatRupees(current.dueAmount)}';
-        subColor = current.isDone ? Colors.green : Colors.blue;
+        sub =
+            '${current.fullLabel} chalu hai — abhi tak ${AppHelpers.formatRupees(current.dueAmount)}';
+        subColor = Colors.blue;
       } else {
         sub = 'Start ${_fmtDay(_washingStart!)}';
       }
@@ -990,99 +1175,219 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        const Text('Dhulai (Washing)',
+            style: TextStyle(fontWeight: FontWeight.bold)),
         Text(sub, style: TextStyle(fontSize: 12, color: subColor)),
       ],
     );
   }
 
-  /// Mahino ki strip: ✓ Done (hara) • Pending (laal) • chalta mahina (neela).
-  /// Kisi month par tap karo to usi ka bill banega.
-  Widget _washingMonthsRow() {
-    if (!_isWashingOn || _washingMonths.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    final shown = _washingMonths.length <= 12
-        ? _washingMonths
-        : _washingMonths.sublist(_washingMonths.length - 12);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 4),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          reverse: true,
-          child: Row(
+  /// Chalte mahine ka saaf progress: kitna hua / pura mahina kitne ka
+  Widget _washingCurrentProgress() {
+    if (!_isWashingOn) return const SizedBox.shrink();
+    final current = _washingMonths.where((m) => m.isCurrent).firstOrNull;
+    if (current == null) return const SizedBox.shrink();
+    final maxAmt = _settings.washingMonthlyAmount <= 0
+        ? 1
+        : _settings.washingMonthlyAmount;
+    final frac = (current.dueAmount / maxAmt).clamp(0.0, 1.0);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              for (final m in shown)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8, bottom: 2),
-                  child: _monthChip(m),
-                ),
+              Text(
+                '${current.shortLabel}: ${current.serviceDays} din × ${AppHelpers.formatRupees(_settings.washingDailyRate)}',
+                style: const TextStyle(fontSize: 12),
+              ),
+              Text(
+                '${AppHelpers.formatRupees(current.dueAmount)} / ${AppHelpers.formatRupees(_settings.washingMonthlyAmount)}',
+                style: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.bold),
+              ),
             ],
           ),
-        ),
-        const SizedBox(height: 2),
-        const Text(
-          'Kisi mahine par tap karo → us month ka bill banega',
-          style: TextStyle(fontSize: 10.5, color: Colors.grey),
-        ),
-      ],
+          const SizedBox(height: 5),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: frac,
+              minHeight: 8,
+              backgroundColor: Colors.grey.withValues(alpha: 0.25),
+              valueColor: AlwaysStoppedAnimation(
+                  current.isDone ? Colors.green : Colors.blue),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _monthChip(WashingMonth m) {
-    final Color bg;
-    final String statusLine;
-    final String detailLine;
-    if (m.isDone) {
-      bg = Colors.green.shade700;
-      statusLine = '✓ Done';
-      detailLine = AppHelpers.formatRupees(m.dueAmount);
-    } else if (m.isCurrent) {
-      bg = Colors.blue.shade700;
-      statusLine = m.remaining > 0
-          ? '• Chalu hai'
-          : '✓ Done';
-      detailLine = m.billedAmount > 0
-          ? '${AppHelpers.formatRupees(m.dueAmount)} (bill ${AppHelpers.formatRupees(m.billedAmount)})'
-          : '${m.serviceDays} din • ${AppHelpers.formatRupees(m.dueAmount)}';
-    } else {
-      bg = Colors.red.shade700;
-      statusLine = m.billedAmount > 0 ? '⏳ Aadha bill' : '⏳ Pending';
-      detailLine = m.billedAmount > 0
-          ? 'Baki ${AppHelpers.formatRupees(m.remaining)}'
-          : AppHelpers.formatRupees(m.dueAmount);
+  /// Saare dhulai mahino ki saaf popup window:
+  /// ✓ Done = hara, ⏳ Pending = laal, chalta mahina = neela.
+  /// Kisi mahine par tap karo to us mahine ka bill banega.
+  Future<void> _showWashingMonthsDialog() async {
+    if (_washingMonths.isEmpty) {
+      _showMsg('Dhulai ON karke start date set karo', isError: true);
+      return;
     }
-    return InkWell(
-      onTap: () {
-        if (m.isDone) {
-          _showMsg('${m.fullLabel} ka bill ban chuka hai ✓');
-        } else {
-          _showMonthBillDialog(m);
-        }
-      },
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration:
-            BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(m.shortLabel,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12)),
-            Text(statusLine,
-                style: const TextStyle(color: Colors.white, fontSize: 10.5)),
-            Text(detailLine,
-                style: const TextStyle(color: Colors.white70, fontSize: 10)),
-          ],
+    final pendingTotal = WashingHelper.pastPendingTotal(_washingMonths);
+    final newestFirst = _washingMonths.reversed.toList();
+    final chosen = await showDialog<WashingMonth>(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        insetPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.78,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(20, 18, 12, 14),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF1565C0),
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.local_laundry_service,
+                        color: Colors.white, size: 26),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Dhulai — Mahino ka Hisaab',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold)),
+                          Text(
+                            pendingTotal > 0
+                                ? 'Pending: ${AppHelpers.formatRupees(pendingTotal)}'
+                                : 'Koi pending nahi ✓',
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.all(14),
+                  itemCount: newestFirst.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (_, idx) {
+                    final m = newestFirst[idx];
+                    final (color, icon, badge) = m.isDone
+                        ? (Colors.green, Icons.check_circle, 'DONE ✓')
+                        : m.isCurrent
+                            ? (Colors.blue, Icons.play_circle_fill,
+                                'chalu hai')
+                            : (Colors.red, Icons.pending_actions,
+                                'PENDING');
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () {
+                        if (m.isDone) {
+                          Navigator.pop(ctx);
+                          _showMsg(
+                              '${m.fullLabel} ka bill ban chuka hai ✓');
+                        } else {
+                          Navigator.pop(ctx, m);
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.08),
+                          border:
+                              Border.all(color: color, width: 1.4),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(icon, color: color, size: 30),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(m.fullLabel,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15)),
+                                  Text(
+                                    m.isFullMonth
+                                        ? 'Pura mahina • ${AppHelpers.formatRupees(m.dueAmount)}'
+                                        : '${m.serviceDays} din • ${AppHelpers.formatRupees(m.dueAmount)}',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  if (m.billedAmount > 0 && !m.isDone)
+                                    Text(
+                                      'Bill bana ${AppHelpers.formatRupees(m.billedAmount)} • Baki ${AppHelpers.formatRupees(m.remaining)}',
+                                      style: const TextStyle(
+                                          fontSize: 12, color: Colors.grey),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 9, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: color,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(badge,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 14),
+                child: Text(
+                  'Laal (pending) ya neele (chalte) mahine par tap karo — us month ka bill banega.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
+    if (chosen != null && mounted) {
+      await _showMonthBillDialog(chosen);
+    }
   }
 
   // ---------- Build ----------
@@ -1188,10 +1493,11 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
             ),
           ),
 
-          // Dhulai (Washing) section — ON/OFF, din counting, due date, date edit
+          // Dhulai (Washing) section — saaf card: status + is mahine ka
+          // progress; saare mahine "MAHINE" popup me bade saaf dikhte hain
           Container(
             margin: const EdgeInsets.symmetric(horizontal: 10),
-            padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+            padding: const EdgeInsets.fromLTRB(14, 10, 8, 6),
             decoration: BoxDecoration(
               color: isDark ? Colors.grey[800] : Colors.white,
               borderRadius: BorderRadius.circular(15),
@@ -1201,30 +1507,45 @@ class _ChestDetailScreenState extends State<ChestDetailScreen> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.local_laundry_service,
-                        color: _isWashingOn ? Colors.blue : Colors.grey),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: (_isWashingOn ? Colors.blue : Colors.grey)
+                            .withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.local_laundry_service,
+                          color: _isWashingOn ? Colors.blue : Colors.grey),
+                    ),
                     const SizedBox(width: 10),
                     Expanded(child: _washingStatusText()),
                     Switch(value: _isWashingOn, onChanged: _toggleWashing),
                   ],
                 ),
-                _washingMonthsRow(),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    if (_isWashingOn)
-                      TextButton.icon(
-                        onPressed: _editWashingDate,
-                        icon: const Icon(Icons.edit_calendar, size: 16),
-                        label: const Text('DATE EDIT'),
-                      ),
-                    TextButton.icon(
-                      onPressed: _showWashingBillDialog,
-                      icon: const Icon(Icons.receipt_long, size: 16),
-                      label: const Text('BILL ADD'),
+                _washingCurrentProgress(),
+                if (_isWashingOn)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Wrap(
+                      children: [
+                        TextButton.icon(
+                          onPressed: _editWashingDate,
+                          icon: const Icon(Icons.edit_calendar, size: 16),
+                          label: const Text('DATE EDIT'),
+                        ),
+                        TextButton.icon(
+                          onPressed: _showWashingMonthsDialog,
+                          icon: const Icon(Icons.calendar_month, size: 16),
+                          label: const Text('MAHINE'),
+                        ),
+                        TextButton.icon(
+                          onPressed: _showWashingBillDialog,
+                          icon: const Icon(Icons.receipt_long, size: 16),
+                          label: const Text('BILL ADD'),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
               ],
             ),
           ),
